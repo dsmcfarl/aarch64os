@@ -1,0 +1,20 @@
+#!/bin/sh -e
+
+if [ -z "$TOOLS" ]
+then
+	echo "TOOLS variable is not set"
+	exit 1
+fi
+
+mkdir -p $TOOLS
+cd $TOOLS
+
+# get a cross compiler
+if [ ! -f arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-elf.tar.xz ]
+then
+	wget https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-elf.tar.xz
+fi
+if [ ! -f arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-elf ]
+then
+	tar -xf arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-elf.tar.xz
+fi
