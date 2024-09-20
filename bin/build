@@ -1,0 +1,14 @@
+#!/bin/sh -e
+PREFIX=aarch64-none-elf-
+AS=${PREFIX}as
+OBJCOPY=${PREFIX}objcopy
+OBJDUMP=${PREFIX}objdump
+
+# cleanup last build
+rm -rf $BUILD
+
+# build kernel
+mkdir -p $BUILD/kernel
+$AS -g -c $SRC/kernel/kernel.s -o $BUILD/kernel/kernel.o
+$OBJCOPY -O binary $BUILD/kernel/kernel.o $BUILD/kernel/kernel.bin
+$OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
