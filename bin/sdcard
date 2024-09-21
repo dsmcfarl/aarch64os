@@ -1,0 +1,26 @@
+#!/bin/sh -e
+
+if [ "$EUID" -eq 0 ]
+then
+	echo "do not run as root"
+	exit 1
+fi
+
+if [ $# -ne 1 ]; then
+  echo "no disk device specified"
+  exit 1
+fi
+
+build
+
+# make a 100MiB partition
+sudo sh -c "echo 'start=2048, size=204800, type=b' | sfdisk $1"
+
+# format the partition
+part="${1}1"  # normal /dev/sda1 format, /dev/mmcblk... format needs a p before the number
+sudo mkfs.vfat -F 32 -n BOOT "$part"
+
+# mount the partion, copy boot files, then unmount
+sudo mount "$part" /mnt/
+sudo cp -r $BUILD/boot/* /mnt/
+sudo umount /mnt/

@@ -1,0 +1,5 @@
+# disable bluetooth so that UART0 (PL011) can be the primary UART
+dtoverlay=disable-bt
+
+# log start4.elf debug output to UART
+uart_2ndstage=1

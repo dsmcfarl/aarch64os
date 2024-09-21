@@ -12,3 +12,12 @@ mkdir -p $BUILD/kernel
 $AS -g -c $SRC/kernel/kernel.s -o $BUILD/kernel/kernel.o
 $OBJCOPY -O binary $BUILD/kernel/kernel.o $BUILD/kernel/kernel.bin
 $OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
+
+# build boot directory
+mkdir -p $BUILD/boot/overlays
+cp $TOOLS/firmware/boot/bcm2711-rpi-4-b.dtb $BUILD/boot/
+cp $TOOLS/firmware/boot/fixup4.dat $BUILD/boot/
+cp $TOOLS/firmware/boot/start4.elf $BUILD/boot/
+cp $TOOLS/firmware/boot/overlays/disable-bt.dtbo $BUILD/boot/overlays/
+cp $CONFIG/boot/config.txt $BUILD/boot/
+cp $BUILD/kernel/kernel.bin $BUILD/boot/kernel8.img
