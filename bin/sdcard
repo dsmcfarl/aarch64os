@@ -1,9 +1,8 @@
 #!/bin/sh -e
 
-if [ "$EUID" -eq 0 ]
-then
-	echo "do not run as root"
-	exit 1
+if [ $(id -u) -eq 0 ]; then
+  echo "do not run as root"
+  exit 1
 fi
 
 if [ $# -ne 1 ]; then
