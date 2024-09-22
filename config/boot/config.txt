@@ -1,3 +1,27 @@
+# Defaults to loading kernel8.img if not specified. Better to be explicit.
+kernel=kernel.bin
+
+# load the kernel to the memory address 0x0. This disables the armstub and allows booting into Exception level 3 with all cores running.
+kernel_old=1
+
+# Set the ARM architecture to 64-bit. This causes the kernel to be relocated to 0x80000.
+# If kernel= is not set and we use the default kernel name of kernel8.img, we don't have to set this as it relocates the kernel to 0x80000 anyway.
+# Not sure why it doesn't boot if the kernel does not get relocated to 0x80000.
+arm_64bit=1
+
+# Set the disable_commandline_tags command to 1 to stop start.elf from filling in ATAGS (memory from 0x100) before launching the kernel.
+# Boot fails with kernel_old=1 if this is not set. Guesing it is because it is overwriting the kernel.
+disable_commandline_tags=1
+
+# Specifies how much memory, in megabytes, to reserve for the exclusive use of the GPU
+# 76MB is the default if more than 1GB of RAM is installed. Setting explicitly to 76MB to avoid confusion.
+# The top of the video core memory is at 0x0_4000_0000 (1024 MiB) so setting this to 76 means the video core memory will start at 0x0_3B40_0000 (948 MiB).
+gpu_mem=76
+
+# Set the device tree address. By default it was loading at 0x100 which was being overwritten by the kernel when kernel_old=1.
+# Tried setting to higher address like 0x3AC00000 (just below video core memory) but it did not work; got "dterror: not a valid FDT - err -9"
+device_tree_address=0x20000000 # 512 MiB
+
 # disable bluetooth so that UART0 (PL011) can be the primary UART
 dtoverlay=disable-bt
 

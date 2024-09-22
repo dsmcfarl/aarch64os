@@ -10,6 +10,7 @@ $TOOLS/qemu/build/qemu-system-aarch64 \
 -machine raspi4b \
 -m 2G -nographic \
 -device loader,file=$BUILD/kernel/kernel.bin,addr=0x80000 \
+-device loader,file=$BUILD/boot/bcm2711-rpi-4-b.dtb,addr=0x20000000 \
 -device loader,addr=0x80000,cpu-num=0 \
 -device loader,addr=0x80000,cpu-num=1 \
 -device loader,addr=0x80000,cpu-num=2 \
