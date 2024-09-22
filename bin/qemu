@@ -2,6 +2,7 @@
 # Boot the kernel on QEMU Raspberry Pi 4 Model B with 2GB RAM.
 # Requires QEMU version 9.0 or later for raspi4b machine type.
 # The Raspberry Pi 4 Model B has 4 expects the kernel to be loaded at 0x80000.
+# NOTE: The dtb gets loaded at address 0x0
 # Usage: qemu [qemu options]
 
 build
@@ -10,7 +11,7 @@ $TOOLS/qemu/build/qemu-system-aarch64 \
 -machine raspi4b \
 -m 2G -nographic \
 -device loader,file=$BUILD/kernel/kernel.bin,addr=0x80000 \
--device loader,file=$BUILD/boot/bcm2711-rpi-4-b.dtb,addr=0x20000000 \
+-dtb $BUILD/boot/bcm2711-rpi-4-b.dtb \
 -device loader,addr=0x80000,cpu-num=0 \
 -device loader,addr=0x80000,cpu-num=1 \
 -device loader,addr=0x80000,cpu-num=2 \
