@@ -1,0 +1,2 @@
+#!/bin/sh -e
+/usr/bin/minicom -D /dev/ttyUSB0 -b 115200
