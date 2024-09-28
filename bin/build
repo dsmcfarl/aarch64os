@@ -9,9 +9,17 @@ rm -rf $BUILD
 
 # build kernel
 mkdir -p $BUILD/kernel
+# assemble
 $AS -g -c $SRC/kernel/kernel.s -o $BUILD/kernel/kernel.o
+# extract just the binary without the ELF header; this is what is copied to the SD card
 $OBJCOPY -O binary $BUILD/kernel/kernel.o $BUILD/kernel/kernel.bin
+# kernel.elf is used with gdb; must have the address changed to 0x80000 for the `load` command to work
+$OBJCOPY -O elf64-littleaarch64 --change-address 0x80000 $BUILD/kernel/kernel.o $BUILD/kernel/kernel.elf
+# kernel.dump is used for inspecting the kernel
 $OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
+# loop.bin is used as a dummy kernel that just loops forever waiting for gdb to connect and load the real kernel for development
+$AS -g -c $SRC/kernel/loop.s -o $BUILD/kernel/loop.o
+$OBJCOPY -O binary $BUILD/kernel/loop.o $BUILD/kernel/loop.bin
 
 # build boot directory
 mkdir -p $BUILD/boot/overlays
@@ -21,3 +29,4 @@ cp $TOOLS/firmware/boot/start4.elf $BUILD/boot/
 cp $TOOLS/firmware/boot/overlays/disable-bt.dtbo $BUILD/boot/overlays/
 cp $CONFIG/boot/config.txt $BUILD/boot/
 cp $BUILD/kernel/kernel.bin $BUILD/boot/
+cp $BUILD/kernel/loop.bin $BUILD/boot/
