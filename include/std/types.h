@@ -19,3 +19,7 @@ typedef double float64;
 
 // Miscellaneous types.
 typedef uint8 byte;
+
+typedef uint8 error;
+extern error const ERROR_NONE;	// 0
+extern error const ERROR;	// 1
