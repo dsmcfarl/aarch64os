@@ -112,29 +112,26 @@ init_el3:
 	mov	x1,init_el3_msg_size
 	bl	write_bytes_pri_uart
 
-	// Initialize the stack pointer for EL3 core 0.
-	// Do this as early as possible once we know we are in EL3
-	// so we can safely do nested branch link (bl) calls.
+	// Setup EL3 and prepare to jump to EL2.
 	ldr	x9,stack_top_el3_0
-	mov	sp,x9	// set EL3 stack pointer
+	mov	sp,x9	// set EL3 stack pointer (early as possible so can safely do nested bl)
 
-	// Setup EL3 vector table, secure configuration register, and prepare to jump to EL2.
 	adr	x9,el3_vector_table
 	msr	vbar_el3,x9	// set EL3 vector base address
 
 	msr	sctlr_el2,xzr	// set EL2 system control register to safe defaults
 	msr	hcr_el2,xzr	// set EL2 hypervisor configuration register to safe defaults
 
-	mrs	x0,scr_el3	// read EL3secure configuration register
-	orr	x0,x0,0b10000000000	// RW (bit 10): set next lower EL (EL2) execution state to AArch64
-	orr	x0,x0,0b1	// NS (bit 1): set EL1 and EL2 security state to non-secure
-	msr	scr_el3, x0	// set secure configuration register
+	mrs	x9,scr_el3	// read EL3secure configuration register
+	orr	x9,x9,0b10000000000	// RW (bit 10): set next lower EL (EL2) execution state to AArch64
+	orr	x9,x9,0b1	// NS (bit 1): set EL1 and EL2 security state to non-secure
+	msr	scr_el3, x9	// set secure configuration register
 
-	mov	x0,0b01001	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=1001 (EL2h: EL2 with SP_EL2)
-	msr	spsr_el3, x0	// set EL3 saved program status register
+	mov	x9,0b01001	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=1001 (EL2h: EL2 with SP_EL2)
+	msr	spsr_el3, x9	// set EL3 saved program status register
 
-	adr	x0,init_el2
-	msr	elr_el3,x0	// set EL3 exception link register to start EL2 at init_el2
+	adr	x9,init_el2
+	msr	elr_el3,x9	// set EL3 exception link register to start EL2 at init_el2
 
 	// Check that we have a device tree where we expect it.
 	bl	verify_device_tree	// verify device tree magic bytes
@@ -160,22 +157,116 @@ init_el3:
 // RETURN VALUE
 //	Does not return.
 init_el2:
+	// Make sure we are in EL2 (not splitting into a function b/c stack is not initialized yet).
+	mrs	x19,currentel	// read current exception level (use callee-saved register, since we need it after a bl)
+	lsr	x19,x19,2	// shift right to get EL
+	and	x19,x19,0x3	// mask bits 0-1
+	cmp	x19,2	// check if we are at EL2
+	b.eq	.init_el2_good_el	// if we are at EL2, continue
+
+	// Not EL2; log an error message and put the core to sleep
+	adr	x0,not_el2_msg
+	mov	x1,not_el2_msg_size
+	bl	write_bytes_pri_uart
+
+	// Append the exception level to the message.
+	mov	x0,x19	// x0 = exception level
+	adr	x1,buffer	// buffer to store exception level
+	mov	x2,buffer_size	// size of buffer
+	bl	uint64_to_ascii_hex	// convert exception level to ASCII hexadecimal
+	mov	x1,x0	// x1 = number of characters written
+	adr	x0,buffer	// buffer
+	bl	write_bytes_pri_uart
+
+	// put the core to sleep
+	bl	sleep_forever
+
+.init_el2_good_el:	// Log that we are initializing EL2.
 	adr	x0,init_el2_msg
 	mov	x1,init_el2_msg_size
 	bl	write_bytes_pri_uart
 
-	// TODO:
+
+	// Setup EL2 and prepare to jump to EL1.
+	ldr	x9,stack_top_el2_0
+	mov	sp,x9	// set EL2 stack pointer
+
+	adr	x9,el2_vector_table
+	msr	vbar_el2,x9	// set EL2 vector base address
+
+	msr	sctlr_el1,xzr	// set EL1 system control register to safe defaults
+
+	mrs	x9,hcr_el2	// read hypervisor configuration register
+	orr	x9,x9,0x80000000	// RW (bit 31): set EL1 execution state to AArch64
+	msr	hcr_el2,x9	// write hypervisor configuration register
+
+	mov	x9,0b00101	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=0101 (EL1h: EL1 with SP_EL1)
+	msr	spsr_el2,x9	// set EL2 saved program status register
+
+	adr	x9,init_el1
+	msr	elr_el2,x9	// set EL2 exception link register to start EL1 at init_el1
 
 .init_el2_done:	// log EL2 initialization complete
 	adr	x0,init_el2_done_msg
 	mov	x1,init_el2_done_msg_size
 	bl	write_bytes_pri_uart
 
+	eret		// return to EL1
+
+// NAME
+//	init_el1 - initialize exception level 1 (EL1)
+//
+// SYNOPIS
+//	void init_el1(void);
+//
+// DESCRIPTION
+//	init_el1() initializes exception level 1 (EL1) then branches to init_el0().
+// RETURN VALUE
+//	Does not return.
+init_el1:
+	// Make sure we are in EL1 (not splitting into a function b/c stack is not initialized yet).
+	mrs	x19,currentel	// read current exception level (use callee-saved register, since we need it after a bl)
+	lsr	x19,x19,2	// shift right to get EL
+	and	x19,x19,0x3	// mask bits 0-1
+	cmp	x19,1	// check if we are at EL1
+	b.eq	.init_el1_good_el	// if we are at EL1, continue
+
+	// Not EL1; log an error message and put the core to sleep
+	adr	x0,not_el1_msg
+	mov	x1,not_el1_msg_size
+	bl	write_bytes_pri_uart
+
+	// Append the exception level to the message.
+	mov	x0,x19	// x0 = exception level
+	adr	x1,buffer	// buffer to store exception level
+	mov	x2,buffer_size	// size of buffer
+	bl	uint64_to_ascii_hex	// convert exception level to ASCII hexadecimal
+	mov	x1,x0	// x1 = number of characters written
+	adr	x0,buffer	// buffer
+	bl	write_bytes_pri_uart
+
+	// put the core to sleep
+	bl	sleep_forever
+
+.init_el1_good_el:	// Log that we are initializing EL1.
+	adr	x0,init_el1_msg
+	mov	x1,init_el1_msg_size
+	bl	write_bytes_pri_uart
+
+
+	// Setup EL1 and prepare to jump to EL0.
+
+	// TODO:
+
+.init_el1_done:	// log EL1 initialization complete
+	adr	x0,init_el1_done_msg
+	mov	x1,init_el1_done_msg_size
+	bl	write_bytes_pri_uart
+
 	// TODO: remove
 	bl	sleep_forever	// sleep forever
 
 	eret		// return to EL1
-
 
 // NAME
 //	verify_device_tree - verify device tree magic bytes
@@ -540,35 +631,54 @@ buffer:	.skip	16
 
 	.balign	8
 stack_top_el3_0:	.quad	0x20000000	// 512MB
-
+stack_top_el3_1:	.quad	0x1FFFE000	// 8KB below
+stack_top_el3_2:	.quad	0x1FFFC000	// 8KB below
+stack_top_el3_3:	.quad	0x1FFFA000	// 8KB below
+stack_top_el2_0:	.quad	0x1FFF8000	// 8KB below
+stack_top_el2_1:	.quad	0x1FFF6000	// 8KB below
+stack_top_el2_2:	.quad	0x1FFF4000	// 8KB below
+stack_top_el2_3:	.quad	0x1FFF2000	// 8KB below
+stack_top_el1_0:	.quad	0x1FFF0000	// 8KB below
+stack_top_el1_1:	.quad	0x1FFEE000	// 8KB below
+stack_top_el1_2:	.quad	0x1FFEC000	// 8KB below
+stack_top_el1_3:	.quad	0x1FFEA000	// 8KB below
+stack_top_el0_0:	.quad	0x1FFF8000	// 8KB below
+stack_top_el0_1:	.quad	0x1FFE6000	// 8KB below
+stack_top_el0_2:	.quad	0x1FFE4000	// 8KB below
+stack_top_el0_3:	.quad	0x1FFE2000	// 8KB below
 	.balign	8
 pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
-
 	.balign	8
 init_el3_msg:	.ascii	"INFO: initlizing EL3...\r\n"
 	.set	init_el3_msg_size,(. - init_el3_msg)
-
 	.balign	8
 init_el3_done_msg:	.ascii	"INFO: EL3 initialization complete\r\n"
 	.set	init_el3_done_msg_size,(. - init_el3_done_msg)
-
-	.balign	8
-init_el2_msg:	.ascii	"INFO: initlizing EL2...\r\n"
-	.set	init_el2_msg_size,(. - init_el2_msg)
-
-	.balign	8
-init_el2_done_msg:	.ascii	"INFO: EL2 initialization complete\r\n"
-	.set	init_el2_done_msg_size,(. - init_el2_done_msg)
-
-	.balign	8
-bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
-	.set	bad_dtb_msg_size,(. - bad_dtb_msg)
-
-	.balign	8
-good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
-	.set	good_dtb_msg_size,(. - good_dtb_msg)
-
 	.balign	8
 not_el3_msg:	.ascii	"ERROR: not EL3, putting core to sleep: EL="
 	.set	not_el3_msg_size,(. - not_el3_msg)
+	.balign	8
+init_el2_msg:	.ascii	"INFO: initlizing EL2...\r\n"
+	.set	init_el2_msg_size,(. - init_el2_msg)
+	.balign	8
+init_el2_done_msg:	.ascii	"INFO: EL2 initialization complete\r\n"
+	.set	init_el2_done_msg_size,(. - init_el2_done_msg)
+	.balign	8
+not_el2_msg:	.ascii	"ERROR: not EL2, putting core to sleep: EL="
+	.set	not_el2_msg_size,(. - not_el2_msg)
+	.balign	8
+init_el1_msg:	.ascii	"INFO: initlizing EL1...\r\n"
+	.set	init_el1_msg_size,(. - init_el1_msg)
+	.balign	8
+init_el1_done_msg:	.ascii	"INFO: EL1 initialization complete\r\n"
+	.set	init_el1_done_msg_size,(. - init_el1_done_msg)
+	.balign	8
+not_el1_msg:	.ascii	"ERROR: not EL1, putting core to sleep: EL="
+	.set	not_el1_msg_size,(. - not_el1_msg)
+	.balign	8
+bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
+	.set	bad_dtb_msg_size,(. - bad_dtb_msg)
+	.balign	8
+good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
+	.set	good_dtb_msg_size,(. - good_dtb_msg)
 // vim: set ts=20:
