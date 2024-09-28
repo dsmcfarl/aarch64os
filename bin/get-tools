@@ -48,3 +48,15 @@ then
 	echo "Cloning Raspberry Pi 4 Model B firmware"
 	git clone --depth=1 --branch=1.20240529 https://github.com/raspberrypi/firmware.git
 fi
+
+# OpenOCD
+cd $TOOLS
+if [ ! -d openocd ]
+then
+	sudo apt install libusb-1.0-0 libusb-1.0-0-dev libcapstone-dev libjaylink-dev libhidapi-dev
+	git clone git://git.code.sf.net/p/openocd/code openocd
+	cd openocd/
+	./bootstrap
+	./configure --enable-jlink --enable-ftdi --enable-cmsis-dap --enable-cmsis-dap-v2
+	make -j 6
+fi
