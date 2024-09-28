@@ -304,8 +304,10 @@ init_el0:
 	mov	x1,init_el0_done_msg_size
 	bl	write_bytes_pri_uart
 
-	// TODO: remove and branch to userspace
-	bl	sleep_forever	// sleep forever
+	// Start userspace
+	ldr	x9,userspace_addr	// x0 = userspace entrypoint
+	br	x9	// branch to userspace entrypoint
+
 
 // NAME
 //	verify_device_tree - verify device tree magic bytes
@@ -729,4 +731,27 @@ bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
 	.balign	8
 good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.set	good_dtb_msg_size,(. - good_dtb_msg)
+	.balign	8
+userspace_addr:	.quad	0x84000	// userspace entrypoint: ultimately this will be something like 0x1000000 (16MB)
+
+// Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+// For ease of initial development, we will put the userspace code right after the kernel code. Ultimately it will be
+// compiled separately and loaded at userspace_addr which will be set to something like 0x1000000 (16MB).
+	.org	0x4000	// make sure page aligned (4KB alignment) and update userspace_addr
+
+// NAME
+//	init - userspace entrypoint
+//
+// SYNOPIS
+//	void init(void);
+//
+// DESCRIPTION
+//	init() is the entrypoint for userspace. It is called by the kernel after the kernel has initialized the exception levels.
+// RETURN VALUE
+//	Does not return.
+init:
+	// TODO: remove
+	bl	sleep_forever	// sleep forever
+
+
 // vim: set ts=20:
