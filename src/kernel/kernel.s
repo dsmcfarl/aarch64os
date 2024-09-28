@@ -21,8 +21,8 @@
 // - no local labels or local symbol names
 // - no pseudo-ops like ldr x1,=label, manually create literal pools when needed
 
-.set	ERROR_NONE,0
-.set	ERROR,1
+	.set	ERROR_NONE,0
+	.set	ERROR,1
 
 // Startup Code ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -113,19 +113,69 @@ init_el3:
 	bl	write_bytes_pri_uart
 
 	// Initialize the stack pointer for EL3 core 0.
+	// Do this as early as possible once we know we are in EL3
+	// so we can safely do nested branch link (bl) calls.
 	ldr	x9,stack_top_el3_0
 	mov	sp,x9	// set EL3 stack pointer
 
+	// Setup EL3 vector table, secure configuration register, and prepare to jump to EL2.
+	adr	x9,el3_vector_table
+	msr	vbar_el3,x9	// set EL3 vector base address
+
+	msr	sctlr_el2,xzr	// set EL2 system control register to safe defaults
+	msr	hcr_el2,xzr	// set EL2 hypervisor configuration register to safe defaults
+
+	mrs	x0,scr_el3	// read EL3secure configuration register
+	orr	x0,x0,0b10000000000	// RW (bit 10): set next lower EL (EL2) execution state to AArch64
+	orr	x0,x0,0b1	// NS (bit 1): set EL1 and EL2 security state to non-secure
+	msr	scr_el3, x0	// set secure configuration register
+
+	mov	x0,0b01001	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=1001 (EL2h: EL2 with SP_EL2)
+	msr	spsr_el3, x0	// set EL3 saved program status register
+
+	adr	x0,init_el2
+	msr	elr_el3,x0	// set EL3 exception link register to start EL2 at init_el2
+
+	// Check that we have a device tree where we expect it.
 	bl	verify_device_tree	// verify device tree magic bytes
 	cmp	x0,ERROR_NONE	// check if device tree is valid
-	b.eq	.init_el3_good_dt	// if valid, continue
-	bl	sleep_forever	// else, sleep forever
+	b.eq	.init_el3_done	// if valid, continue
+	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
 
-.init_el3_good_dt:
-	// TODO: initialize EL3 and branch to init_el2
-	bl	sleep_forever
+.init_el3_done:	// log EL3 initialization complete
+	adr	x0,init_el3_done_msg
+	mov	x1,init_el3_done_msg_size
+	bl	write_bytes_pri_uart
 
-	b	.	// should never reach here
+	eret		// return to EL2
+
+// NAME
+//	init_el2 - initialize exception level 2 (EL2)
+//
+// SYNOPIS
+//	void init_el2(void);
+//
+// DESCRIPTION
+//	init_el2() initializes exception level 2 (EL2) then branches to init_el1().
+// RETURN VALUE
+//	Does not return.
+init_el2:
+	adr	x0,init_el2_msg
+	mov	x1,init_el2_msg_size
+	bl	write_bytes_pri_uart
+
+	// TODO:
+
+.init_el2_done:	// log EL2 initialization complete
+	adr	x0,init_el2_done_msg
+	mov	x1,init_el2_done_msg_size
+	bl	write_bytes_pri_uart
+
+	// TODO: remove
+	bl	sleep_forever	// sleep forever
+
+	eret		// return to EL1
+
 
 // NAME
 //	verify_device_tree - verify device tree magic bytes
@@ -183,6 +233,210 @@ verify_device_tree:
 
 .verify_d_t_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
 	ret
+
+// EL3 Vector Table ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	.balign	0x800	// vector tables must be 2KB aligned
+el3_vector_table:
+// Handle synchronous exceptions from the current EL using SP0
+el3_curr_el_sp0_sync:
+	eret
+	.balign	0x80	// each vector must be 128B aligned
+// Handle IRQs from the current EL using SP0
+el3_curr_el_sp0_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from the current EL using SP0
+el3_curr_el_sp0_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from the current EL using SP0
+el3_curr_el_sp0_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from the current EL using SPx
+el3_curr_el_spx_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from the current EL using SPx
+el3_curr_el_spx_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from the current EL using SPx
+el3_curr_el_spx_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from the current EL using SPx
+el3_curr_el_spx_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from a lower EL (AArch64)
+el3_lower_el_aarch64_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from a lower EL (AArch64)
+el3_lower_el_aarch64_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from a lower EL (AArch64)
+el3_lower_el_aarch64_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from a lower EL (AArch64)
+el3_lower_el_aarch64_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from a lower EL (AArch32)
+el3_lower_el_aarch32_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from a lower EL (AArch32)
+el3_lower_el_aarch32_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from a lower EL (AArch32)
+el3_lower_el_aarch32_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from a lower EL (AArch32)
+el3_lower_el_aarch32_serror:
+	eret
+
+// EL2 Vector Table ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	.balign	0x800
+el2_vector_table:
+// Handle synchronous exceptions from the current EL using SP0
+el2_curr_el_sp0_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from the current EL using SP0
+el2_curr_el_sp0_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from the current EL using SP0
+el2_curr_el_sp0_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from the current EL using SP0
+el2_curr_el_sp0_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from the current EL using SPx
+el2_curr_el_spx_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from the current EL using SPx
+el2_curr_el_spx_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from the current EL using SPx
+el2_curr_el_spx_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from the current EL using SPx
+el2_curr_el_spx_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from a lower EL (AArch64)
+el2_lower_el_aarch64_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from a lower EL (AArch64)
+el2_lower_el_aarch64_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from a lower EL (AArch64)
+el2_lower_el_aarch64_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from a lower EL (AArch64)
+el2_lower_el_aarch64_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from a lower EL (AArch32)
+el2_lower_el_aarch32_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from a lower EL (AArch32)
+el2_lower_el_aarch32_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from a lower EL (AArch32)
+el2_lower_el_aarch32_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from a lower EL (AArch32)
+el2_lower_el_aarch32_serror:
+	eret
+
+// EL1 Vector Table ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	.balign	0x800
+el1_vector_table:
+// Handle synchronous exceptions from the current EL using SP0
+el1_curr_el_sp0_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from the current EL using SP0
+el1_curr_el_sp0_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from the current EL using SP0
+el1_curr_el_sp0_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from the current EL using SP0
+el1_curr_el_sp0_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from the current EL using SPx
+el1_curr_el_spx_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from the current EL using SPx
+el1_curr_el_spx_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from the current EL using SPx
+el1_curr_el_spx_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from the current EL using SPx
+el1_curr_el_spx_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from a lower EL (AArch64)
+el1_lower_el_aarch64_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from a lower EL (AArch64)
+el1_lower_el_aarch64_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from a lower EL (AArch64)
+el1_lower_el_aarch64_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from a lower EL (AArch64)
+el1_lower_el_aarch64_serror:
+	eret
+	.balign	0x80
+// Handle synchronous exceptions from a lower EL (AArch32)
+el1_lower_el_aarch32_sync:
+	eret
+	.balign	0x80
+// Handle IRQs from a lower EL (AArch32)
+el1_lower_el_aarch32_irq:
+	eret
+	.balign	0x80
+// Handle FIQs from a lower EL (AArch32)
+el1_lower_el_aarch32_fiq:
+	eret
+	.balign	0x80
+// Handle system error exceptions from a lower EL (AArch32)
+el1_lower_el_aarch32_serror:
+	eret
 
 // Kernel Library Functions ////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -293,6 +547,18 @@ pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
 	.balign	8
 init_el3_msg:	.ascii	"INFO: initlizing EL3...\r\n"
 	.set	init_el3_msg_size,(. - init_el3_msg)
+
+	.balign	8
+init_el3_done_msg:	.ascii	"INFO: EL3 initialization complete\r\n"
+	.set	init_el3_done_msg_size,(. - init_el3_done_msg)
+
+	.balign	8
+init_el2_msg:	.ascii	"INFO: initlizing EL2...\r\n"
+	.set	init_el2_msg_size,(. - init_el2_msg)
+
+	.balign	8
+init_el2_done_msg:	.ascii	"INFO: EL2 initialization complete\r\n"
+	.set	init_el2_done_msg_size,(. - init_el2_done_msg)
 
 	.balign	8
 bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
