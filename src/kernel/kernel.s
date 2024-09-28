@@ -21,6 +21,9 @@
 // - no local labels or local symbol names
 // - no pseudo-ops like ldr x1,=label, manually create literal pools when needed
 
+.set	ERROR_NONE,0
+.set	ERROR,1
+
 // Startup Code ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // NAME
@@ -80,56 +83,19 @@ stop_core:
 // RETURN VALUE
 //	Does not return.
 init_el3:
-	// verify device tree magic bytes
-	// device tree address defined in config.txt: device_tree_address=0x20000000
-	// must contain 0xD00DFEED (big-endian), 0xEDFE0DD0 (little-endian) in first 4 bytes
-	mov	x1,0x20000000	// address of device tree
-
-.init_el3_dtb:	ldrb	w0,[x1],1	// read first byte of device tree and increment address
-	cmp	x0,0xD0	// check if first byte is 0xD0
-	b.ne	.init_el3_bad_dtb	// if not, log
-	ldrb	w0,[x1],1	// read second byte of device tree and increment address
-	cmp	x0,0x0D	// check if second byte is 0x0D
-	b.ne	.init_el3_bad_dtb	// if not, log
-	ldrb	w0,[x1],1	// read third byte of device tree and increment address
-	cmp	x0,0xFE	// check if third byte is 0xFE
-	b.ne	.init_el3_bad_dtb	// if not, log
-	ldrb	w0,[x1],1	// read fourth byte of device tree and increment address
-	cmp	x0,0xED	// check if fourth byte is 0xED
-	b.ne	.init_el3_bad_dtb	// if not, log
-	b	.init_el3_good_dtb	// if all bytes are correct, continue
-
-.init_el3_try_qemu:	// try QEMU address for dtb
-	mov	x1,0	// address of device tree for qemu
-	b	.init_el3_dtb	// repeat device tree check
-
-
-.init_el3_bad_dtb:	// log that we found an invalid device tree and sleep
-	cmp	x1,0	// check which address we were reading from
-	b.ne	.init_el3_try_qemu	// try QEMU address for dtb
-	adr	x0,bad_dtb_msg
-	mov	x1,bad_dtb_msg_size
-	bl	write_bytes_pri_uart
-	b	sleep_forever
-
-.init_el3_good_dtb:	// log that we found a valid device tree
-	adr	x0,good_dtb_msg
-	mov	x1,good_dtb_msg_size
-	bl	write_bytes_pri_uart
-
-.init_el3_check_el:	// check exception level
-	mrs	x19,currentel	// read current exception level
+	// Make sure we are in EL3 (not splitting into a function b/c stack is not initialized yet).
+	mrs	x19,currentel	// read current exception level (use callee-saved register, since we need it after a bl)
 	lsr	x19,x19,2	// shift right to get EL
 	and	x19,x19,0x3	// mask bits 0-1
 	cmp	x19,3	// check if we are at EL3
 	b.eq	.init_el3_good_el	// if we are at EL3, continue
 
-.init_el3_bad_el:	// log an error message
+	// Not EL3; log an error message and put the core to sleep
 	adr	x0,not_el3_msg
 	mov	x1,not_el3_msg_size
 	bl	write_bytes_pri_uart
 
-	// append the exception level to the message
+	// Append the exception level to the message.
 	mov	x0,x19	// x0 = exception level
 	adr	x1,buffer	// buffer to store exception level
 	mov	x2,buffer_size	// size of buffer
@@ -139,17 +105,84 @@ init_el3:
 	bl	write_bytes_pri_uart
 
 	// put the core to sleep
-	b	sleep_forever
+	bl	sleep_forever
 
-.init_el3_good_el:	// Log a message
+.init_el3_good_el:	// Log that we are initializing EL3.
 	adr	x0,init_el3_msg
 	mov	x1,init_el3_msg_size
 	bl	write_bytes_pri_uart
 
-	// TODO: initialize EL3 and branch to init_el2
+	// Initialize the stack pointer for EL3 core 0.
+	ldr	x9,stack_top_el3_0
+	mov	sp,x9	// set EL3 stack pointer
 
-	b	sleep_forever
+	bl	verify_device_tree	// verify device tree magic bytes
+	cmp	x0,ERROR_NONE	// check if device tree is valid
+	b.eq	.init_el3_good_dt	// if valid, continue
+	bl	sleep_forever	// else, sleep forever
+
+.init_el3_good_dt:
+	// TODO: initialize EL3 and branch to init_el2
+	bl	sleep_forever
+
 	b	.	// should never reach here
+
+// NAME
+//	verify_device_tree - verify device tree magic bytes
+//
+// SYNOPIS
+//	error verify_device_tree(void);
+//
+// DESCRIPTION
+//	verify_device_tree() verifies the device tree magic bytes in the device tree at address 0x20000000 or 0x0.
+//
+// RETURN VALUE
+//	Returns E_OK if the device tree magic bytes are correct, otherwise it logs an error message and returns E_ERROR.
+verify_device_tree:
+	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
+
+	// verify device tree magic bytes
+	// device tree address defined in config.txt: device_tree_address=0x20000000
+	// must contain 0xD00DFEED (big-endian), 0xEDFE0DD0 (little-endian) in first 4 bytes
+	mov	x1,0x20000000	// address of device tree
+
+.verify_d_t_verify:	ldrb	w0,[x1],1	// read first byte of device tree and increment address
+	cmp	x0,0xD0	// check if first byte is 0xD0
+	b.ne	.verify_d_t_bad	// if not, log
+	ldrb	w0,[x1],1	// read second byte of device tree and increment address
+	cmp	x0,0x0D	// check if second byte is 0x0D
+	b.ne	.verify_d_t_bad	// if not, log
+	ldrb	w0,[x1],1	// read third byte of device tree and increment address
+	cmp	x0,0xFE	// check if third byte is 0xFE
+	b.ne	.verify_d_t_bad	// if not, log
+	ldrb	w0,[x1],1	// read fourth byte of device tree and increment address
+	cmp	x0,0xED	// check if fourth byte is 0xED
+	b.ne	.verify_d_t_bad	// if not, log
+	b	.verify_d_t_good	// if all bytes are correct, continue
+
+.verify_d_t_qemu:	// try QEMU address for dtb
+	mov	x1,0	// address of device tree for qemu
+	b	.verify_d_t_verify	// repeat device tree check
+
+
+.verify_d_t_bad:	// log that we found an invalid device tree and sleep
+	cmp	x1,0	// check which address we were reading from
+	b.ne	.verify_d_t_qemu	// try QEMU address for dtb
+	adr	x0,bad_dtb_msg
+	mov	x1,bad_dtb_msg_size
+	bl	write_bytes_pri_uart
+	mov	x0,ERROR	// return ERROR
+	b	.verify_d_t_out
+
+.verify_d_t_good:	// log that we found a valid device tree
+	adr	x0,good_dtb_msg
+	mov	x1,good_dtb_msg_size
+	bl	write_bytes_pri_uart
+	mov	x0,ERROR_NONE	// return ERROR_NONE
+	b	.verify_d_t_out
+
+.verify_d_t_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
+	ret
 
 // Kernel Library Functions ////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -252,18 +285,21 @@ buffer:	.skip	16
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	.balign	8
+stack_top_el3_0:	.quad	0x20000000	// 512MB
+
+	.balign	8
 pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
 
 	.balign	8
-init_el3_msg:	.ascii	"init EL3\n"
+init_el3_msg:	.ascii	"INFO: initlizing EL3...\r\n"
 	.set	init_el3_msg_size,(. - init_el3_msg)
 
 	.balign	8
-bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\n"
+bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
 	.set	bad_dtb_msg_size,(. - bad_dtb_msg)
 
 	.balign	8
-good_dtb_msg:	.ascii	"INFO: found valid device tree \n"
+good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.set	good_dtb_msg_size,(. - good_dtb_msg)
 
 	.balign	8
