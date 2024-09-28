@@ -1,5 +1,7 @@
 # Defaults to loading kernel8.img if not specified. Better to be explicit.
-kernel=kernel.bin
+#kernel=kernel.bin
+# use this one for remote debugging, it just loops forever and does nothing
+kernel=loop.bin
 
 # load the kernel to the memory address 0x0. This disables the armstub and allows booting into Exception level 3 with all cores running.
 kernel_old=1
@@ -27,3 +29,9 @@ dtoverlay=disable-bt
 
 # log start4.elf debug output to UART
 uart_2ndstage=1
+
+# Disable pull downs (required for jtag)
+gpio=22-27=np
+
+# Enable jtag pins (i.e. GPIO22-GPIO27)
+enable_jtag_gpio=1

@@ -1,0 +1,34 @@
+# prevent confirmation everytime we try to quit
+define hook-quit
+	set confirm off
+end
+
+# custom command to reset the RPi4B and load an updated kernel must wait about
+# 15 seconds to ensure reset is complete and openocd is reconnected
+define reset
+	monitor adapter assert srst
+	shell sleep 1
+	monitor adapter deassert srst
+	shell sleep 1
+	shell printf 'waiting 15 seconds...\r\n'
+	shell sleep 15
+	monitor halt
+	shell sleep 1
+	load
+	# set program counter to kernel entry point
+	set $pc=0x80000
+end
+
+# Specify the kernel we want to load when we run `load`. This file must have an
+# ELF header specifying a start address of 0x80000.
+file build/kernel/kernel.elf
+
+# Connect to openocd (must already be running and the RPi4B must be powered on).
+target extended-remote :3333
+
+# Setup the GDB TUI to show three windows with registers in one and assembly in the other.
+layout split
+layout regs
+
+# Call our custom command to reset and load
+reset
