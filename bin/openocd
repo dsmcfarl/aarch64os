@@ -1,0 +1,2 @@
+#!/bin/sh -e
+$TOOLS/openocd/src/openocd --search $TOOLS/openocd/tcl --file interface/jlink.cfg --file $CONFIG/openocd/rpi4b.cfg

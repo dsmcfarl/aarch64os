@@ -1,0 +1,3 @@
+#!/bin/sh -e
+cd $ROOT
+aarch64-none-elf-gdb -x config/gdb/gdbinit-openocd
