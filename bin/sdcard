@@ -5,7 +5,7 @@ if [ $(id -u) -eq 0 ]; then
   exit 1
 fi
 
-if [ $# -ne 1 ]; then
+if [ $# -lt 1 ]; then
   echo "no disk device specified"
   exit 1
 fi
@@ -22,4 +22,7 @@ sudo mkfs.vfat -F 32 -n BOOT "$part"
 # mount the partion, copy boot files, then unmount
 sudo mount "$part" /mnt/
 sudo cp -r $BUILD/boot/* /mnt/
+if [ "$2" = "gdb" ]; then
+  sudo sed -i 's/kernel.bin/loop.bin/' /mnt/config.txt
+fi
 sudo umount /mnt/
