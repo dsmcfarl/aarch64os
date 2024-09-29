@@ -732,12 +732,13 @@ bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
 good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.set	good_dtb_msg_size,(. - good_dtb_msg)
 	.balign	8
-userspace_addr:	.quad	0x84000	// userspace entrypoint: ultimately this will be something like 0x1000000 (16MB)
+userspace_addr:	.quad	0x88000	// userspace entrypoint: ultimately this will be something like 0x1000000 (16MB)
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // For ease of initial development, we will put the userspace code right after the kernel code. Ultimately it will be
 // compiled separately and loaded at userspace_addr which will be set to something like 0x1000000 (16MB).
-	.org	0x4000	// make sure page aligned (4KB alignment) and update userspace_addr
+	.org	0x8000	// 32KB - make sure page aligned (4KB alignment) and update userspace_addr
 
 // NAME
 //	init - userspace entrypoint
