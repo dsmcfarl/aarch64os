@@ -27,7 +27,6 @@ define reset
 	set $pc=0x80000
 	# redraw TUI
 	refresh
-	continue
 end
 
 # Connect to openocd (must already be running and the RPi4B must be powered on).
