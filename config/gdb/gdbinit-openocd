@@ -29,6 +29,22 @@ define reset
 	refresh
 end
 
+define fileload
+
+	shell printf '\r\nbuilding kernel...\r\n'
+	shell build
+	# Specify the kernel we want to load when we run `load`. This file must have an
+	# ELF header specifying a start address of 0x80000.
+	file build/kernel/kernel.elf
+	shell sleep 1
+	shell printf 'loading kernel...\r\n'
+	load
+	# set program counter to kernel entry point
+	set $pc=0x80000
+	# redraw TUI
+	refresh
+end
+
 # Connect to openocd (must already be running and the RPi4B must be powered on).
 target extended-remote :3333
 
@@ -37,4 +53,4 @@ layout split
 layout regs
 
 # Call our custom command to reset and load
-reset
+# reset
