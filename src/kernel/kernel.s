@@ -113,6 +113,8 @@ init_el3:
 	bl	write_bytes_pri_uart
 
 	// Setup EL3 and prepare to jump to EL2.
+	msr	cptr_el3, xzr	// Disable trapping of CPTR_EL3 accesses or use of Adv.SIMD/FPU (TODO: do we want this?)
+
 	ldr	x9,stack_top_el3_0
 	mov	sp,x9	// set EL3 stack pointer (early as possible so can safely do nested bl)
 
@@ -122,12 +124,25 @@ init_el3:
 	msr	sctlr_el2,xzr	// set EL2 system control register to safe defaults
 	msr	hcr_el2,xzr	// set EL2 hypervisor configuration register to safe defaults
 
-	mrs	x9,scr_el3	// read EL3secure configuration register
-	orr	x9,x9,0b10000000000	// RW (bit 10): set next lower EL (EL2) execution state to AArch64
-	orr	x9,x9,0b1	// NS (bit 1): set EL1 and EL2 security state to non-secure
+	mov	x9,1	// NS[0]=1: EL2 and EL1 are non-secure
+	orr	x9,x9,(1<<1)	// IRQ[1]=1: IRQs routed to EL3 (TODO: do we want this?)
+	orr	x9,x9,(1<<2)	// FIQ[2]=1: FIQs routed to EL3 (TODO: do we want this?)
+	orr	x9,x9,(1<<3)	// EA[3]=1: SError routed to EL3 (TODO: do we want this?)
+			// SMD[7]=0: Secure Monitor Call (SMC) instructions are enabled
+	orr	x9,x9,(1<<8)	// HCE[8]=1: HVC instructions are enabled (TODO: do we want this?)
+			// SIF[9]=0: Secure state instruction fetches from Non-secure memory are permitted
+	orr	x9,x9,(1<<10)	// RW[10]=1: Next EL down uses AArch64
+	orr	x9,x9,(1<<11)	// ST[11]=1: Secure EL1 can access timers (TODO: do we want this?)
+			// TWI[12]=0: EL2, EL1 and EL0 execution of WFI instructions is not trapped to EL3
+			// TWE[13]=0: EL2, EL1 and EL0 execution of WFE instructions is not trapped to EL3
 	msr	scr_el3, x9	// set secure configuration register
 
-	mov	x9,0b01001	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=1001 (EL2h: EL2 with SP_EL2)
+	mov	x9,0b1001	// M[3:0]=0b1001: EL2 with SP_EL2 (EL2h)
+			// M[4]=0: AArch64
+			// F[6]=0: FIQs are not masked
+			// I[7]=0: IRQs are not masked
+			// A[8]=0: SError exceptions are not masked
+			// D[9]=0: Debug exceptions are not masked
 	msr	spsr_el3, x9	// set EL3 saved program status register
 
 	adr	x9,init_el2
@@ -188,6 +203,7 @@ init_el2:
 
 
 	// Setup EL2 and prepare to jump to EL1.
+	msr	cptr_el2, xzr	// Disable trapping of CPTR_EL2 accesses or use of Adv.SIMD/FPU (TODO: do we want this?)
 	ldr	x9,stack_top_el2_0
 	mov	sp,x9	// set EL2 stack pointer
 
@@ -196,12 +212,27 @@ init_el2:
 
 	msr	sctlr_el1,xzr	// set EL1 system control register to safe defaults
 
-	mrs	x9,hcr_el2	// read hypervisor configuration register
-	orr	x9,x9,0x80000000	// RW (bit 31): set EL1 execution state to AArch64
-	msr	hcr_el2,x9	// write hypervisor configuration register
+	mov	x9,0	// VM[0]=0: EL1&0 stage 2 address translation disabled
+	orr	x9,x9,(1<<3)	// FMO[3]=1: Physical FIQ routing (TODO: do we want this?)
+	orr	x9,x9,(1<<4)	// IMO[4]=1: Physical IRQ routing (TODO: do we want this?)
+	orr	x9,x9,(1<<31)	// RW[31]=1: NS.EL1 is AArch64
+			// TGE[27]=0: Entry to NS.EL1 is possible
+	msr	hcr_el2,x9	// set hypervisor configuration register
 
-	mov	x9,0b00101	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=0101 (EL1h: EL1 with SP_EL1)
-	msr	spsr_el2,x9	// set EL2 saved program status register
+	mov	x9,0b0101	// M[3:0]=0b0101: EL1 with SP_EL1 (EL1h).EL1 with SP_EL1 (EL1h)
+			// M[4]=0: AArch64
+			// F[6]=0: FIQs are not masked
+			// I[7]=0: IRQs are not masked
+			// A[8]=0: SError exceptions are not masked
+			// D[9]=0: Debug exceptions are not masked
+	msr	spsr_el2, x9	// set EL2 saved program status register
+
+	// TODO: study what these are doing
+	mrs	x9, midr_el1
+	msr	vpidr_el2, x9
+	mrs	x9, mpidr_el1
+	msr	vmpidr_el2, x9
+	msr	vttbr_el2,xzr	// Set VMID - Although we are not using stage 2 translation, NS.EL1 still cares about the VMID
 
 	adr	x9,init_el1
 	msr	elr_el2,x9	// set EL2 exception link register to start EL1 at init_el1
@@ -264,14 +295,155 @@ init_el1:
 	ldr	x9,stack_top_el0_0
 	msr	sp_EL0,x9	// set EL0 stack pointer (cannot do it in EL0 so have to do here)
 
-	mov	x9,0x10000	// (bit 16 = 1): allow EL0 to use wfi instruction
-	orr	x9,x9,0x40000	// (bit 18 = 1): allow EL0 to use wfe instruction
-	msr	sctlr_el1,x9	// set EL1 system control register
+	// Copy userspace from userspace_start to userspace_addr (userspace_size bytes)
+	adr	x9,userspace_addr
+	ldr	x9,[x9]	// x9 = userspace entrypoint
+	adr	x0,userspace_start
+	mov	x1,x9
+	mov	x2,userspace_size
+	bl	copy_bytes
+
+	/////////////////////////////////////////////////////////
+	// MMU setup
+	//
+
+	// Set the Base address
+	// ---------------------
+	adr      x0, tt_l1_base                  // Get address of level 1 for TTBR0_EL1
+	MSR      TTBR0_EL1, x0
+
+
+	// Set up memory attributes
+	// -------------------------
+	// This equates to:
+	// 0 = b01000100 = Normal, Inner/Outer Non-Cacheable
+	// 1 = b11111111 = Normal, Inner/Outer WB/WA/RA
+	// 2 = b00000000 = Device-nGnRnE
+	MOV      x0, #0x000000000000FF44
+	MSR      MAIR_EL1, x0
+
+
+	// Set up TCR_EL1
+	// ---------------
+	MOV      x0, #0x19                        // T0SZ=0b011001 Limits VA space to 39 bits, translation starts @ l1
+	ORR      x0, x0, #(0x1 << 8)              // IGRN0=0b01    Walks to TTBR0 are Inner WB/WA
+	ORR      x0, x0, #(0x1 << 10)             // OGRN0=0b01    Walks to TTBR0 are Outer WB/WA
+	ORR      x0, x0, #(0x3 << 12)             // SH0=0b11      Inner Shareable
+	ORR      x0, x0, #(0x1 << 23)             // EPD1=0b1      Disable table walks from TTBR1
+		    // TBI0=0b0
+		    // TG0=0b00      4KB granule for TTBR0 (Note: Different encoding to TG0)
+		    // A1=0          TTBR0 contains the ASID
+		    // AS=0          8-bit ASID
+		    // IPS=0         32-bit IPA space
+	MSR      TCR_EL1, x0
+
+	// NOTE: We don't need to set up T1SZ/TBI1/ORGN1/IRGN1/SH1, as we've set EPD==1 (disabling walks from TTBR1)
+
+
+	// Ensure changes to system register are visible before MMU enabled
+	ISB
+
+
+	// Invalidate TLBs
+	// ----------------
+	TLBI     VMALLE1
+	DSB      SY
+	ISB
+
+
+	// Generate Translation Table
+	// ---------------------------
+	// First fill table with faults
+	// NOTE: The way the space for the tables is reserved pre-fills it with zeros
+	// When loading the image into a simulation this saves time.  On real hardware
+	// you would want this zeroing loop.
+	//  LDR      x1, =tt_l1_base                   // Address of L1 table
+	//  MOV      w2, #512                          // Number of entries
+	//1:
+	//  STP      xzr, xzr, [x1], #16               // 0x0 (Fault) into table entries
+	//  SUB      w2, w2, #2                        // Decrement count by 2, as we are writing two entries at once
+	//  CBNZ     w2, 1b
+
+
+	//
+	// Very basic translation table
+	//
+	adr      x1, tt_l1_base                   // Address of L1 table
+
+	// TT block entries templates   (L1 and L2, NOT L3)
+	// Assuming table contents:
+	// 0 = b01000100 = Normal, Inner/Outer Non-Cacheable
+	// 1 = b11111111 = Normal, Inner/Outer WB/WA/RA
+	// 2 = b00000000 = Device-nGnRnE
+	.equ TT_S1_FAULT,           0x0
+	.equ TT_S1_NORMAL_NO_CACHE, 0x00000000000000401    // Index = 0, AF=1
+	.equ TT_S1_NORMAL_WBWA,     0x00000000000000405    // Index = 1, AF=1
+	.equ TT_S1_DEVICE_nGnRnE,   0x00600000000000409    // Index = 2, AF=1, PXN=1, UXN=1
+	.equ TT_S1_NON_SHARED,      (0 << 8)               // Non-shareable
+	.equ TT_S1_INNER_SHARED,    (3 << 8)               // Inner-shareable
+	.equ TT_S1_OUTER_SHARED,    (2 << 8)               // Outer-shareable
+	.equ TT_S1_PRIV_RW,         (0x0)
+	.equ TT_S1_PRIV_RO,         (0x2 << 6)
+	.equ TT_S1_USER_RW,         (0x1 << 6)
+	.equ TT_S1_USER_RO,         (0x3 << 6)
+	// [0]: 0x0000,0000 - 0x3FFF,FFFF
+	LDR      x0, =TT_S1_NORMAL_WBWA            // Entry template
+	ORR      x0, x0, #TT_S1_INNER_SHARED       // 'OR' with inner-shareable attribute
+		     // Don't need to OR in address, as it is 0
+		     // AP=0b00, EL1 RW, EL0 No Access
+	STR      x0, [x1]
+
+	// [1]: 0x4000,0000 - 0x7FFF,FFFF
+	LDR      x0, =TT_S1_NORMAL_WBWA            // Entry template
+	ORR      x0, x0, #TT_S1_INNER_SHARED       // 'OR' with inner-shareable attribute
+	ORR      x0, x0, #TT_S1_USER_RO
+	ORR      x0, x0, #0x40000000               // 'OR' template with base physical address
+		     // AP=0b00, EL1 RW, EL0 No Access
+	STR      x0, [x1, #8]
+	// [1]: 0x8000,0000 - 0xBFFF,FFFF
+	LDR      x0, =TT_S1_DEVICE_nGnRnE          // Entry template
+	ORR      x0, x0, #0x80000000               // 'OR' template with base physical address
+		     // AP=0b00, EL1 RW, EL0 No Access
+	STR      x0, [x1, #16]
+	// [1]: 0xC000,0000 - 0xFFFF,FFFF
+	LDR      x0, =TT_S1_DEVICE_nGnRnE          // Entry template
+	ORR      x0, x0, #0xC0000000               // 'OR' template with base physical address
+		     // AP=0b00, EL1 RW, EL0 No Access
+	STR      x0, [x1, #24]
+
+	DSB      SY
+
+
+	// Enable MMU
+	// -----------
+	MOV      x0, #(1 << 0)                     // M=1           Enable the stage 1 MMU
+	ORR      x0, x0, #(1 << 2)                 // C=1           Enable data and unified caches
+	ORR      x0, x0, #(1 << 12)                // I=1           Enable instruction fetches to allocate into unified caches
+		     // A=0           Strict alignment checking disabled
+		     // SA=0          Stack alignment checking disabled
+		     // WXN=0         Write permission does not imply XN
+		     // EE=0          EL3 data accesses are little endian
+	orr	x0,x0,0x10000	// (bit 16 = 1): allow EL0 to use wfi instruction
+	orr	x0,x0,0x40000	// (bit 18 = 1): allow EL0 to use wfe instruction
+
+	MSR      SCTLR_EL1, x0
+	ISB
+
+	//
+	// MMU is now enabled
+	//
+
+	NOP
+	NOP
+	NOP
+	NOP
+	/////////////////////////////////////////////////////////
 
 	mov	x9,0b00000	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=0000 (EL0: EL0 with SP_EL0)
 	msr	spsr_el1,x9	// set EL1 saved program status register
 
-	adr	x9,init_el0
+	adr	x9,userspace_addr
+	ldr	x9,[x9]	// x9 = userspace entrypoint
 	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at init_el0
 
 .init_el1_done:	// log EL1 initialization complete
@@ -280,6 +452,18 @@ init_el1:
 	bl	write_bytes_pri_uart
 
 	eret		// return to EL0
+
+copy_bytes:
+	// Copy bytes from x0 to x1 for x2 bytes.
+	// x0 = source address
+	// x1 = destination address
+	// x2 = number of bytes to copy
+copy_bytes_loop:
+	ldrb	w3,[x0],1	// read byte from source and increment source address
+	strb	w3,[x1],1	// write byte to destination and increment destination address
+	subs	x2,x2,1		// decrement number of bytes to copy
+	b.ne	copy_bytes_loop	// if not done, repeat
+	ret
 
 // NAME
 //	init_el0 - initialize exception level 0 (EL0)
@@ -664,9 +848,14 @@ uint64_to_ascii_hex:
 
 // RW Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	.balign	0x1000	// 4KB alignment
+tt_l1_base:
+  .fill 4096 , 1 , 0
+
 	.balign	8
 buffer:	.skip	16
 	.set	buffer_size,(. - buffer)
+
 
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -683,10 +872,12 @@ stack_top_el1_0:	.quad	0x1FFF0000	// 8KB below
 stack_top_el1_1:	.quad	0x1FFEE000	// 8KB below
 stack_top_el1_2:	.quad	0x1FFEC000	// 8KB below
 stack_top_el1_3:	.quad	0x1FFEA000	// 8KB below
-stack_top_el0_0:	.quad	0x1FFF8000	// 8KB below
-stack_top_el0_1:	.quad	0x1FFE6000	// 8KB below
-stack_top_el0_2:	.quad	0x1FFE4000	// 8KB below
-stack_top_el0_3:	.quad	0x1FFE2000	// 8KB below
+
+stack_top_el0_0:	.quad	0x60000000	// 1.5GB
+stack_top_el0_1:	.quad	0x5FFE6000	// 8KB below
+stack_top_el0_2:	.quad	0x5FFE4000	// 8KB below
+stack_top_el0_3:	.quad	0x5FFE2000	// 8KB below
+	.balign	8
 	.balign	8
 pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
 	.balign	8
@@ -732,13 +923,15 @@ bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
 good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.set	good_dtb_msg_size,(. - good_dtb_msg)
 	.balign	8
-userspace_addr:	.quad	0x88000	// userspace entrypoint: ultimately this will be something like 0x1000000 (16MB)
+userspace_addr:	.quad	0x40000000	// dest to copy userspace
+	.balign	8
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// For ease of initial development, we will put the userspace code right after the kernel code. Ultimately it will be
-// compiled separately and loaded at userspace_addr which will be set to something like 0x1000000 (16MB).
-	.org	0x8000	// 32KB - make sure page aligned (4KB alignment) and update userspace_addr
+// For ease of initial development, we will put the userspace code right after the kernel code then copy it.. Ultimately it will be
+// compiled separately and loaded at the appropriate address.
+	.balign	8
+userspace_start:	
 
 // NAME
 //	init - userspace entrypoint
@@ -752,7 +945,14 @@ userspace_addr:	.quad	0x88000	// userspace entrypoint: ultimately this will be s
 //	Does not return.
 init:
 	// TODO: remove
-	bl	sleep_forever	// sleep forever
+.init_loop:
+	mov x0, 0x3
+	nop
+	nop
+	mov x1, 0x4
+	wfe	// wait for an event
+	b	.init_loop
 
+	.set	userspace_size,(. - userspace_start)
 
 // vim: set ts=20:
