@@ -388,24 +388,30 @@ init_el1:
 	adr	x9,el1_vector_table
 	msr	vbar_el1,x9	// set EL1 vector base address
 
-	// Check that we have a device tree where we expect it.
+	// Check that we have a device tree where we expect it. We are not using the device tree, but want
+	// to make sure it was put where we expected it.
 	bl	verify_device_tree	// verify device tree magic bytes
 	cmp	x0,ERROR_NONE	// check if device tree is valid
 	b.eq	.init_el1_good_dt	// if valid, continue
 	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
 
 .init_el1_good_dt:
-	// TODO: copy device tree somewhere. How do we know how big it is?
 
 	// Copy userspace from userspace_start to userspace_addr (userspace_size bytes)
-	// TODO: make this a function
 	adr	x9,userspace_addr
 	ldr	x9,[x9]	// x9 = userspace entrypoint
 	adr	x0,userspace_start
 	mov	x1,x9
 	mov	x2,userspace_size
-	bl	copy_16b_aligned
-	// TODO: check for errors
+	bl	copy_balign_16
+	cmp	x0,ERROR_NONE	// check if copy was successful
+	b.eq	.init_el1_good_copy	// if successful, continue
+	adr	x0,not_balign_16_msg
+	mov	x1,not_balign_16_msg_size
+	bl	write_bytes_pri_uart
+	bl	sleep_forever	// else, sleep forever
+
+.init_el1_good_copy:
 
 	// Enable MMU
 	bl	enable_el1_el0_mmu
@@ -435,41 +441,41 @@ init_el1:
 	eret		// return to EL0
 
 // NAME
-//	copy_16b_aligned - copy 16-bit aligned bytes
+//	copy_balign_16 - copy 16-bit aligned bytes
 //
 // SYNOPIS
-//	error copy_16b_aligned(void *src, void *dst, size size);
+//	error copy_balign_16(void *src, void *dst, size size);
 //
 // DESCRIPTION
-//	copy_16b_aligned() copies 16-bit aligned bytes from src to dst for size bytes.
+//	copy_balign_16() copies 16-bit aligned bytes from src to dst for size bytes.
 //
 // RETURN VALUE
 //	Returns ERROR_NONE if the data is aligned, otherwise it returns ERROR.
-copy_16b_aligned:
+copy_balign_16:
 	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
 
 	// Check for alignment.
 	and	x9,x0,0xF
-	cbnz	x9,copy_16b_a_unaligned
+	cbnz	x9,copy_b_16_unaligned
 	and	x9,x1,0xF
-	cbnz	x9,copy_16b_a_unaligned
+	cbnz	x9,copy_b_16_unaligned
 	and	x9,x2,0xF
-	cbnz	x9,.copy_16b_a_unaligned
+	cbnz	x9,.copy_b_16_unaligned
 	mov	x9,16
 	udiv	x2,x2,x9	// divide by 16 to get number of 16-byte blocks
-	b	copy_16b_a_loop
+	b	.copy_b_16_loop
 
-.copy_16b_a_unaligned:
+.copy_b_16_unaligned:
 	mov	x0,ERROR
-	b .copy_16b_a_out
+	b .copy_b_16_out
 
-.copy_16b_a_loop:	ldp	x3,x4,[x0],16	// read bytes from source and increment source address
+.copy_b_16_loop:	ldp	x3,x4,[x0],16	// read bytes from source and increment source address
 	stp	x3,x4,[x1],16	// write byte to destination and increment destination address
 	subs	x2,x2,1		// decrement number of bytes to copy
-	b.ne	.copy_16b_a_loop	// if not done, repeat
+	b.ne	.copy_b_16_loop	// if not done, repeat
 	mov	x0,ERROR_NONE	// return ERROR_NONE
 
-.copy_16b_a_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
+.copy_b_16_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
 	ret
 
 // NAME
@@ -1048,6 +1054,9 @@ bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
 good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.set	good_dtb_msg_size,(. - good_dtb_msg)
 	.balign	8
+not_balign_16_msg:	.ascii	"ERROR: address not 16-byte aligned\r\n"
+	.set	not_balign_16_msg_size,(. - not_balign_16_msg)
+	.balign	8
 userspace_addr:	.quad	0x40000000	// dest to copy userspace - must be 16 byte aligned
 	.balign	8
 
@@ -1078,6 +1087,7 @@ init:
 	wfe	// wait for an event
 	b	.init_loop
 
+	.balign	16	// userspace_size must be 16-byte aligned
 	.set	userspace_size,(. - userspace_start)
 
 // vim: set ts=20:
