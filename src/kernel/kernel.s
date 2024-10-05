@@ -441,13 +441,13 @@ init_el1:
 	eret		// return to EL0
 
 // NAME
-//	copy_balign_16 - copy 16-bit aligned bytes
+//	copy_balign_16 - copy 16-byte aligned bytes
 //
 // SYNOPIS
 //	error copy_balign_16(void *src, void *dst, size size);
 //
 // DESCRIPTION
-//	copy_balign_16() copies 16-bit aligned bytes from src to dst for size bytes.
+//	copy_balign_16() copies 16-byte aligned bytes from src to dst for size bytes.
 //
 // RETURN VALUE
 //	Returns ERROR_NONE if the data is aligned, otherwise it returns ERROR.
@@ -547,68 +547,80 @@ verify_device_tree:
 enable_el1_el0_mmu:
 	stp    fp,lr,[sp,-16]!	// save frame pointer and link register
 
-	// Set the Base address
-	// ---------------------
-	adr      x0, tt_l1_base                  // Get address of level 1 for TTBR0_EL1
-	MSR      TTBR0_EL1, x0
+	// Set translation table address.
+	adr	x9,tt_l1_base	// x9=address of level 1 translation table
+	msr	ttbr0_el1,x9	// set translation table base register 0
 
+	// Setup the three memory attribute types we will use.
+	mov	x9,0x44	// Attr0[7:0]=0b01000100: Normal, Inner/Outer Non-Cacheable
+	orr	x9,x9,(0xFF<<8)	// Attr1[15:8]=0b11111111: Normal, Inner/Outer WB/WA/RA
+			// Attr2[23:16]=0b00000000: Device-nGnRnE
+	msr	mair_el1,x9	// set memory attribute indirection register
 
-	// Set up memory attributes
-	// -------------------------
-	// This equates to:
-	// 0 = b01000100 = Normal, Inner/Outer Non-Cacheable
-	// 1 = b11111111 = Normal, Inner/Outer WB/WA/RA
-	// 2 = b00000000 = Device-nGnRnE
-	MOV      x0, #0x000000000000FF44
-	MSR      MAIR_EL1, x0
+	// Set translation control register.
+	mov	x9,25	// T0SZ[5:0]=0b011001: size offset of TTBR0 memory region
+			// memory size is limited to 2^(64-T0SZ) = 2^39 = 512GB
+			// TTBRO properties:
+			// EPD0[7]=0: enable table walks from TTBR0
+	orr	x9,x9,(0x1<<8)	// IGRN0[9:8]=0b01: normal inner write-back read-allocate write-allocate cacheable
+	orr	x9,x9,(0x1<<10)	// OGRN0[11:10]=0b01: normal outer write-back read-allocate write-allocate cacheable
+	orr	x9,x9,(0x3<<12)	// SH0[13:12]=0b11: inner shareable
+			// TGO0[15:14]=0b00: 4KB granule
+			// TBI0[37]=0b0: disable top byte ignore
+			// TTBR1 properties:
+	orr	x9,x9,(0x1<<23)	// EPD1[23]=0b1: disable table walks from TTBR1 so don't need to set other properties
+			// misc properties:
+			// A1[22]=0b0: TTBR0 contains the ASID
+			// AS[26]=0b0: 8-bit ASID
+			// IPS[34:32]=0b000: 32-bit ipa space
+	msr	tcr_el1,x9	// set translation control register
 
+	// Ensure changes to system register are visible before MMU enabled.
+	isb
 
-	// Set up TCR_EL1
-	// ---------------
-	MOV      x0, #0x19                        // T0SZ=0b011001 Limits VA space to 39 bits, translation starts @ l1
-	ORR      x0, x0, #(0x1 << 8)              // IGRN0=0b01    Walks to TTBR0 are Inner WB/WA
-	ORR      x0, x0, #(0x1 << 10)             // OGRN0=0b01    Walks to TTBR0 are Outer WB/WA
-	ORR      x0, x0, #(0x3 << 12)             // SH0=0b11      Inner Shareable
-	ORR      x0, x0, #(0x1 << 23)             // EPD1=0b1      Disable table walks from TTBR1
-		    // TBI0=0b0
-		    // TG0=0b00      4KB granule for TTBR0 (Note: Different encoding to TG0)
-		    // A1=0          TTBR0 contains the ASID
-		    // AS=0          8-bit ASID
-		    // IPS=0         32-bit IPA space
-	MSR      TCR_EL1, x0
-
-	// NOTE: We don't need to set up T1SZ/TBI1/ORGN1/IRGN1/SH1, as we've set EPD==1 (disabling walks from TTBR1)
-
-
-	// Ensure changes to system register are visible before MMU enabled
-	ISB
-
-
-	// Invalidate TLBs
-	// ----------------
-	TLBI     VMALLE1
-	DSB      SY
-	ISB
-
+	// Invalidate TLB.
+	tlbi	vmalle1
+	dsb	sy
+	isb
 
 	// Generate Translation Table
-	// ---------------------------
-	// First fill table with faults
-	// NOTE: The way the space for the tables is reserved pre-fills it with zeros
-	// When loading the image into a simulation this saves time.  On real hardware
+	adr	x9,tt_l1_base	// x9
+	// TODO:
+	// first fill table with faults
+	// note: the way the space for the tables is reserved pre-fills it with zeros
+	// when loading the image into a simulation this saves time.  on real hardware
 	// you would want this zeroing loop.
-	//  LDR      x1, =tt_l1_base                   // Address of L1 table
-	//  MOV      w2, #512                          // Number of entries
+	//  ldr	x9,=tt_l1_base	// address of l1 table
+	//  mov	w2,512	// number of entries
 	//1:
-	//  STP      xzr, xzr, [x1], #16               // 0x0 (Fault) into table entries
-	//  SUB      w2, w2, #2                        // Decrement count by 2, as we are writing two entries at once
-	//  CBNZ     w2, 1b
+	//  stp	xzr,xzr,[x9],16               // 0x0 (fault) into table entries
+	//  sub	w2,w2,2                        // decrement count by 2, as we are writing two entries at once
+	//  cbnz	w2,1b
 
+	// Translation Table Block Descriptor Format:
+	// [0]: valid bit
+	// [1]: table bit (0 for block, 1 for table)
+	// AttrIdx[4:2]: memory attribute index from MAIR_EL1
+	// NS[5]: non-secure bit (ignored at EL1)
+	// AP[7:6]: access permissions
+	// SH[9:8]: shareability
+	// AF[10]: access flag
+	// nG[11]: not global bit
+	// DBM[51]: dirty bit modifier
+	// Contig[52]: contiguous bit
+	// PXN[53]: privileged execute never bit
+	// UXN[54]: unprivileged execute never bit
 
-	//
-	// Very basic translation table
-	//
-	adr      x1, tt_l1_base                   // Address of L1 table
+	// Block 0: 0x0000_0000 - 0x3FFF_FFFF (0GB to 1GB)
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
+			// PXN[53]=0: EL1/2/3 can execute
+			// UXN[54]=0: EL0 can execute (EL0 can't access though)
+			// address = 0x0
+	str	x10,[x9]	// write block descriptor to table
 
 	// TT block entries templates   (L1 and L2, NOT L3)
 	// Assuming table contents:
@@ -626,12 +638,6 @@ enable_el1_el0_mmu:
 	.equ TT_S1_PRIV_RO,         (0x2 << 6)
 	.equ TT_S1_USER_RW,         (0x1 << 6)
 	.equ TT_S1_USER_RO,         (0x3 << 6)
-	// [0]: 0x0000,0000 - 0x3FFF,FFFF
-	LDR      x0, =TT_S1_NORMAL_WBWA            // Entry template
-	ORR      x0, x0, #TT_S1_INNER_SHARED       // 'OR' with inner-shareable attribute
-		     // Don't need to OR in address, as it is 0
-		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x1]
 
 	// [1]: 0x4000,0000 - 0x7FFF,FFFF
 	LDR      x0, =TT_S1_NORMAL_WBWA            // Entry template
@@ -639,17 +645,17 @@ enable_el1_el0_mmu:
 	ORR      x0, x0, #TT_S1_USER_RO
 	ORR      x0, x0, #0x40000000               // 'OR' template with base physical address
 		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x1, #8]
+	STR      x0, [x9, #8]
 	// [1]: 0x8000,0000 - 0xBFFF,FFFF
 	LDR      x0, =TT_S1_DEVICE_nGnRnE          // Entry template
 	ORR      x0, x0, #0x80000000               // 'OR' template with base physical address
 		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x1, #16]
+	STR      x0, [x9, #16]
 	// [1]: 0xC000,0000 - 0xFFFF,FFFF
 	LDR      x0, =TT_S1_DEVICE_nGnRnE          // Entry template
 	ORR      x0, x0, #0xC0000000               // 'OR' template with base physical address
 		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x1, #24]
+	STR      x0, [x9, #24]
 
 	DSB      SY
 
