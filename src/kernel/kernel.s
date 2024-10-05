@@ -381,16 +381,21 @@ init_el1:
 	mov	x1,init_el1_msg_size
 	bl	write_bytes_pri_uart
 
-
-	// Setup EL1 and prepare to jump to EL0.
+	// Setup EL1.
 	ldr	x9,stack_top_el1_0
 	mov	sp,x9	// set EL1 stack pointer
 
 	adr	x9,el1_vector_table
 	msr	vbar_el1,x9	// set EL1 vector base address
 
-	ldr	x9,stack_top_el0_0
-	msr	sp_EL0,x9	// set EL0 stack pointer (cannot do it in EL0 so have to do here)
+
+	// Check that we have a device tree where we expect it.
+	bl	verify_device_tree	// verify device tree magic bytes
+	cmp	x0,ERROR_NONE	// check if device tree is valid
+	b.eq	.init_el1_good_dt	// if valid, continue
+	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
+
+.init_el1_good_dt:
 
 	// Copy userspace from userspace_start to userspace_addr (userspace_size bytes)
 	adr	x9,userspace_addr
@@ -399,13 +404,6 @@ init_el1:
 	mov	x1,x9
 	mov	x2,userspace_size
 	bl	copy_bytes
-
-	// Check that we have a device tree where we expect it.
-	bl	verify_device_tree	// verify device tree magic bytes
-	cmp	x0,ERROR_NONE	// check if device tree is valid
-	b.eq	.init_el1_dt_good	// if valid, continue
-	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
-.init_el1_dt_good:
 
 	/////////////////////////////////////////////////////////
 	// MMU setup
@@ -543,12 +541,21 @@ init_el1:
 	NOP
 	/////////////////////////////////////////////////////////
 
-	mov	x9,0b00000	// DAIF=0000, M[4]=0 (AArch64), M[3:0]=0000 (EL0: EL0 with SP_EL0)
+	// Prepare to jump to EL0.
+	ldr	x9,stack_top_el0_0
+	msr	sp_EL0,x9	// set EL0 stack pointer (cannot do it in EL0 so have to do here)
+
+	mov	x9,0	// M[3:0]=0000: EL0
+			// M[4]=0: AArch64
+			// F[6]=0: FIQs are not masked
+			// I[7]=0: IRQs are not masked
+			// A[8]=0: SError exceptions are not masked
+			// D[9]=0: Debug exceptions are not masked
 	msr	spsr_el1,x9	// set EL1 saved program status register
 
 	adr	x9,userspace_addr
-	ldr	x9,[x9]	// x9 = userspace entrypoint
-	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at init_el0
+	ldr	x9,[x9]	// x9 = address of userspace entrypoint
+	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at userspace entrypoint
 
 .init_el1_done:	// log EL1 initialization complete
 	adr	x0,init_el1_done_msg
@@ -568,34 +575,6 @@ copy_bytes_loop:
 	subs	x2,x2,1		// decrement number of bytes to copy
 	b.ne	copy_bytes_loop	// if not done, repeat
 	ret
-
-// NAME
-//	init_el0 - initialize exception level 0 (EL0)
-//
-// SYNOPIS
-//	void init_el0(void);
-//
-// DESCRIPTION
-//	init_el0() initializes exception level 0 (EL0) then branches to userspace.
-// RETURN VALUE
-//	Does not return.
-init_el0:
-	// Cannot make sure we are in EL0 b/c cannot read currentel in EL0
-
-	// Log that we are initializing EL0.
-	adr	x0,init_el0_msg
-	mov	x1,init_el0_msg_size
-	bl	write_bytes_pri_uart
-
-	// log EL0 initialization complete
-	adr	x0,init_el0_done_msg
-	mov	x1,init_el0_done_msg_size
-	bl	write_bytes_pri_uart
-
-	// Start userspace
-	ldr	x9,userspace_addr	// x0 = userspace entrypoint
-	br	x9	// branch to userspace entrypoint
-
 
 // NAME
 //	verify_device_tree - verify device tree magic bytes
