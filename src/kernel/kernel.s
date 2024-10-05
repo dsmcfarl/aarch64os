@@ -388,7 +388,6 @@ init_el1:
 	adr	x9,el1_vector_table
 	msr	vbar_el1,x9	// set EL1 vector base address
 
-
 	// Check that we have a device tree where we expect it.
 	bl	verify_device_tree	// verify device tree magic bytes
 	cmp	x0,ERROR_NONE	// check if device tree is valid
@@ -396,8 +395,10 @@ init_el1:
 	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
 
 .init_el1_good_dt:
+	// TODO: copy device tree somewhere. How do we know how big it is?
 
 	// Copy userspace from userspace_start to userspace_addr (userspace_size bytes)
+	// TODO: make this a function
 	adr	x9,userspace_addr
 	ldr	x9,[x9]	// x9 = userspace entrypoint
 	adr	x0,userspace_start
@@ -405,9 +406,113 @@ init_el1:
 	mov	x2,userspace_size
 	bl	copy_bytes
 
-	/////////////////////////////////////////////////////////
-	// MMU setup
-	//
+	// Enable MMU
+	bl	enable_el1_el0_mmu
+
+
+	// Prepare to jump to EL0.
+	ldr	x9,stack_top_el0_0
+	msr	sp_EL0,x9	// set EL0 stack pointer (cannot do it in EL0 so have to do here)
+
+	mov	x9,0	// M[3:0]=0000: EL0
+			// M[4]=0: AArch64
+			// F[6]=0: FIQs are not masked
+			// I[7]=0: IRQs are not masked
+			// A[8]=0: SError exceptions are not masked
+			// D[9]=0: Debug exceptions are not masked
+	msr	spsr_el1,x9	// set EL1 saved program status register
+
+	adr	x9,userspace_addr
+	ldr	x9,[x9]	// x9 = address of userspace entrypoint
+	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at userspace entrypoint
+
+.init_el1_done:	// log EL1 initialization complete
+	adr	x0,init_el1_done_msg
+	mov	x1,init_el1_done_msg_size
+	bl	write_bytes_pri_uart
+
+	eret		// return to EL0
+
+copy_bytes:
+	// Copy bytes from x0 to x1 for x2 bytes.
+	// x0 = source address
+	// x1 = destination address
+	// x2 = number of bytes to copy
+copy_bytes_loop:
+	ldrb	w3,[x0],1	// read byte from source and increment source address
+	strb	w3,[x1],1	// write byte to destination and increment destination address
+	subs	x2,x2,1		// decrement number of bytes to copy
+	b.ne	copy_bytes_loop	// if not done, repeat
+	ret
+
+// NAME
+//	verify_device_tree - verify device tree magic bytes
+//
+// SYNOPIS
+//	error verify_device_tree(void);
+//
+// DESCRIPTION
+//	verify_device_tree() verifies the device tree magic bytes in the device tree at address 0x20000000 or 0x0.
+//
+// RETURN VALUE
+//	Returns E_OK if the device tree magic bytes are correct, otherwise it logs an error message and returns E_ERROR.
+verify_device_tree:
+	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
+
+	// verify device tree magic bytes
+	// device tree address defined in config.txt: device_tree_address=0x20000000
+	// must contain 0xD00DFEED (big-endian), 0xEDFE0DD0 (little-endian) in first 4 bytes
+	mov	x1,0x20000000	// address of device tree
+
+.verify_d_t_verify:	ldrb	w0,[x1],1	// read first byte of device tree and increment address
+	cmp	x0,0xD0	// check if first byte is 0xD0
+	b.ne	.verify_d_t_bad	// if not, log
+	ldrb	w0,[x1],1	// read second byte of device tree and increment address
+	cmp	x0,0x0D	// check if second byte is 0x0D
+	b.ne	.verify_d_t_bad	// if not, log
+	ldrb	w0,[x1],1	// read third byte of device tree and increment address
+	cmp	x0,0xFE	// check if third byte is 0xFE
+	b.ne	.verify_d_t_bad	// if not, log
+	ldrb	w0,[x1],1	// read fourth byte of device tree and increment address
+	cmp	x0,0xED	// check if fourth byte is 0xED
+	b.ne	.verify_d_t_bad	// if not, log
+	b	.verify_d_t_good	// if all bytes are correct, continue
+
+.verify_d_t_qemu:	// try QEMU address for dtb
+	mov	x1,0	// address of device tree for qemu
+	b	.verify_d_t_verify	// repeat device tree check
+
+
+.verify_d_t_bad:	// log that we found an invalid device tree and sleep
+	cmp	x1,0	// check which address we were reading from
+	b.ne	.verify_d_t_qemu	// try QEMU address for dtb
+	adr	x0,bad_dtb_msg
+	mov	x1,bad_dtb_msg_size
+	bl	write_bytes_pri_uart
+	mov	x0,ERROR	// return ERROR
+	b	.verify_d_t_out
+
+.verify_d_t_good:	// log that we found a valid device tree
+	adr	x0,good_dtb_msg
+	mov	x1,good_dtb_msg_size
+	bl	write_bytes_pri_uart
+	mov	x0,ERROR_NONE	// return ERROR_NONE
+	b	.verify_d_t_out
+
+.verify_d_t_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
+	ret
+
+// NAME
+//	enable_el1_el0_mmu - enable EL1 and EL0 MMU
+//
+// SYNOPIS
+//	void enable_el1_el0_mmu(void);
+//
+// DESCRIPTION
+//	enable_el1_el0_mmu() enables the EL1 and EL0 MMU.
+//
+enable_el1_el0_mmu:
+	stp    fp,lr,[sp,-16]!	// save frame pointer and link register
 
 	// Set the Base address
 	// ---------------------
@@ -539,98 +644,8 @@ init_el1:
 	NOP
 	NOP
 	NOP
-	/////////////////////////////////////////////////////////
 
-	// Prepare to jump to EL0.
-	ldr	x9,stack_top_el0_0
-	msr	sp_EL0,x9	// set EL0 stack pointer (cannot do it in EL0 so have to do here)
-
-	mov	x9,0	// M[3:0]=0000: EL0
-			// M[4]=0: AArch64
-			// F[6]=0: FIQs are not masked
-			// I[7]=0: IRQs are not masked
-			// A[8]=0: SError exceptions are not masked
-			// D[9]=0: Debug exceptions are not masked
-	msr	spsr_el1,x9	// set EL1 saved program status register
-
-	adr	x9,userspace_addr
-	ldr	x9,[x9]	// x9 = address of userspace entrypoint
-	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at userspace entrypoint
-
-.init_el1_done:	// log EL1 initialization complete
-	adr	x0,init_el1_done_msg
-	mov	x1,init_el1_done_msg_size
-	bl	write_bytes_pri_uart
-
-	eret		// return to EL0
-
-copy_bytes:
-	// Copy bytes from x0 to x1 for x2 bytes.
-	// x0 = source address
-	// x1 = destination address
-	// x2 = number of bytes to copy
-copy_bytes_loop:
-	ldrb	w3,[x0],1	// read byte from source and increment source address
-	strb	w3,[x1],1	// write byte to destination and increment destination address
-	subs	x2,x2,1		// decrement number of bytes to copy
-	b.ne	copy_bytes_loop	// if not done, repeat
-	ret
-
-// NAME
-//	verify_device_tree - verify device tree magic bytes
-//
-// SYNOPIS
-//	error verify_device_tree(void);
-//
-// DESCRIPTION
-//	verify_device_tree() verifies the device tree magic bytes in the device tree at address 0x20000000 or 0x0.
-//
-// RETURN VALUE
-//	Returns E_OK if the device tree magic bytes are correct, otherwise it logs an error message and returns E_ERROR.
-verify_device_tree:
-	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
-
-	// verify device tree magic bytes
-	// device tree address defined in config.txt: device_tree_address=0x20000000
-	// must contain 0xD00DFEED (big-endian), 0xEDFE0DD0 (little-endian) in first 4 bytes
-	mov	x1,0x20000000	// address of device tree
-
-.verify_d_t_verify:	ldrb	w0,[x1],1	// read first byte of device tree and increment address
-	cmp	x0,0xD0	// check if first byte is 0xD0
-	b.ne	.verify_d_t_bad	// if not, log
-	ldrb	w0,[x1],1	// read second byte of device tree and increment address
-	cmp	x0,0x0D	// check if second byte is 0x0D
-	b.ne	.verify_d_t_bad	// if not, log
-	ldrb	w0,[x1],1	// read third byte of device tree and increment address
-	cmp	x0,0xFE	// check if third byte is 0xFE
-	b.ne	.verify_d_t_bad	// if not, log
-	ldrb	w0,[x1],1	// read fourth byte of device tree and increment address
-	cmp	x0,0xED	// check if fourth byte is 0xED
-	b.ne	.verify_d_t_bad	// if not, log
-	b	.verify_d_t_good	// if all bytes are correct, continue
-
-.verify_d_t_qemu:	// try QEMU address for dtb
-	mov	x1,0	// address of device tree for qemu
-	b	.verify_d_t_verify	// repeat device tree check
-
-
-.verify_d_t_bad:	// log that we found an invalid device tree and sleep
-	cmp	x1,0	// check which address we were reading from
-	b.ne	.verify_d_t_qemu	// try QEMU address for dtb
-	adr	x0,bad_dtb_msg
-	mov	x1,bad_dtb_msg_size
-	bl	write_bytes_pri_uart
-	mov	x0,ERROR	// return ERROR
-	b	.verify_d_t_out
-
-.verify_d_t_good:	// log that we found a valid device tree
-	adr	x0,good_dtb_msg
-	mov	x1,good_dtb_msg_size
-	bl	write_bytes_pri_uart
-	mov	x0,ERROR_NONE	// return ERROR_NONE
-	b	.verify_d_t_out
-
-.verify_d_t_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
+	ldp	fp,lr,[sp],16	// restore frame pointer and link register
 	ret
 
 // EL3 Vector Table ////////////////////////////////////////////////////////////////////////////////////////////////////
