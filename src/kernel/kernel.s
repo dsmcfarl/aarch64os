@@ -2,25 +2,110 @@
 //
 // An AArch64 kernel for Raspberry Pi 4 Model B (RPi4B).
 //
-// This program must be compiled and the binary dumped and loaded at address 0x80000 which is where the RPi4B
-// bootloader expects a kernel. No linking is required.
+// To build, first assemble:
+//
+//    aarch64-none-elf-as -g -c kernel.s -o kernel.o
+//
+// Then extract just the binary without the ELF header:
+//
+//    aarch64-none-elf-objcopy -O binary kernel.o kernel.bin
+//
+// No linking is required.
+//
+// Then prepare a FAT32 formatted SD card. The following are the minimum required files on the SD card. All except
+// kernel.bin and config.txt are from the Raspberry Pi firmware repository:
+//
+// - kernel.bin
+// - config.txt
+// - bcm2711-rpi-4-b.dtb
+// - fixup4.dat
+// - start4.elf
+// - overlays/disable-bt.dtbo
+//
+// The contents of config.txt must be:
+//
+//    # Defaults to loading kernel8.img if not specified. Better to be explicit.
+//    kernel=kernel.bin
+//
+//    # load the kernel to the memory address 0x0. This disables the armstub and allows booting into Exception level 3
+//    # with all cores running.
+//    kernel_old=1
+//
+//    # Set the ARM architecture to 64-bit. This causes the kernel to be relocated to 0x80000.
+//    # If kernel= is not set and we use the default kernel name of kernel8.img, we don't have to set this as it
+//    # relocates the kernel to 0x80000 anyway.
+//    arm_64bit=1
+//
+//    # Set the disable_commandline_tags command to 1 to stop start4.elf from filling in ATAGS (memory from 0x100)
+//    # before launching the kernel.
+//    # Boot fails with kernel_old=1 if this is not set because it overwrites the kernel.
+//    disable_commandline_tags=1
+//
+//    # Specifies how much memory, in megabytes, to reserve for the exclusive use of the GPU
+//    # 76MB is the default if more than 1GB of RAM is installed. Setting explicitly to 76MB to avoid confusion.
+//    # The top of the video core memory is at 0x0_4000_0000 (1024 MiB) so setting this to 76 means the video core
+//    # memory will start at 0x0_3B40_0000 (948 MiB).
+//    gpu_mem=76
+//
+//    # Set the device tree address. By default it loads at 0x100 which was being overwritten by the kernel when
+//    # kernel_old=1.
+//    # Setting to much higher address like 0x3AC00000 (just below video core memory) results in the following error:
+//    # "dterror: not a valid FDT - err -9"
+//    device_tree_address=0x20000000 # 512 MiB
+//
+//    # disable bluetooth so that UART0 (PL011) can be the primary UART. Otherwise, the mini UART is the primary UART
+//    # and it is not as full-featured as the PL011.
+//    dtoverlay=disable-bt
+//
+//    # log start4.elf debug output to UART
+//    uart_2ndstage=1
+//
+//    # Disable pull downs (required for JTAG)
+//    gpio=22-27=np
+//
+//    # Enable JTAG pins (i.e. GPIO22-GPIO27)
+//    enable_jtag_gpio=1
+//
+// For remote debugging with a JTAG debug probe and GDB, it is useful to have an ELF file with the start address
+// changed to 0x80000 which is where the 64-bit Arm core expects to find the kernel. This file can be used with
+// the GDB load command:
+//
+//     aarch64-none-elf-objcopy -O elf64-littleaarch64 --change-address 0x80000 kernel.o kernel.elf
 //
 // References:
-// - ARM Cortex-A72 MPCore Processor Technical Reference Manual: https://developer.arm.com/documentation/100095/0003/
+// 1. ARM Cortex-A72 MPCore Processor Technical Reference Manual: https://developer.arm.com/documentation/100095/0003/
+// 2. Arm Architecture Reference Manual for A-profile architecture: https://developer.arm.com/documentation/ddi0487/latest/
+// 3. AArch64 memory management examples: https://developer.arm.com/documentation/102416/0100
 //
 // Notes:
 // - use 4 byte alignment for all functions
 // - not using bss section since we are not using C so no need to zero out memory
+// - use `bl` instead of `b` even for 'no return' functions so the link register gets set for debugging
 //
 // Use simple code to allow bootstrapping with a minimal assembler:
 // - no linking
 // - no macros
 // - no sections
 // - minimal number of mnemonics and directives
-// - no expressions (using them for string lengths for now, but can replace with constants)
+// - no expressions (using them for string lengths and similar for now, but can replace with constants)
 // - no local labels or local symbol names
 // - no pseudo-ops like ldr x1,=label, manually create literal pools when needed
+//
+// Register Usage:
+// - x0-x7: argument registers
+// - x8: indirect result location register and used for syscall number
+// - x9-x15: temporary registers
+// - x16-x17: intra-procedure-call temporary registers (can be used by linker generated call veneers and Procedure
+//            Linkage Table code). Not planning to use these, but avoid using them in case they are needed.
+// - x18: platform register (not currently using this for anything, but avoid this register in case it is needed)
+// - x19-x28: callee-saved registers
+// - x29 (fp): frame pointer
+// - x30 (lr): link register
+// - x31 (xzr): zero register
 
+// Constants ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Standard error codes:
 	.set	ERROR_NONE,0
 	.set	ERROR,1
 
@@ -68,6 +153,7 @@ _start:
 
 // RETURN VALUE
 //	Does not return.
+// TODO: allow for core to be woken up. See armstub8.S from Raspberry Pi for example.
 stop_core:
 	b	sleep_forever
 	b	.	// should never reach here
@@ -112,30 +198,38 @@ init_el3:
 	mov	x1,init_el3_msg_size
 	bl	write_bytes_pri_uart
 
-	// Setup EL3 and prepare to jump to EL2.
-	msr	cptr_el3, xzr	// Disable trapping of CPTR_EL3 accesses or use of Adv.SIMD/FPU (TODO: do we want this?)
-
+	// Setup EL3.
 	ldr	x9,stack_top_el3_0
 	mov	sp,x9	// set EL3 stack pointer (early as possible so can safely do nested bl)
 
 	adr	x9,el3_vector_table
 	msr	vbar_el3,x9	// set EL3 vector base address
 
-	msr	sctlr_el2,xzr	// set EL2 system control register to safe defaults
-	msr	hcr_el2,xzr	// set EL2 hypervisor configuration register to safe defaults
+	msr	cptr_el3, xzr	// Disable trapping of accesses to CPACR, CPACR_EL1, HCPTR,
+			// CPTR_EL2, trace, Activity Monitor, SME, Streaming SVE,
+			// SVE, and Advanced SIMD and floating-point functionality to EL3.
 
+	// Set up the EL3 secure configuration register.
+	// Raspberry Pi armstub8.S uses (SCR_RW | SCR_HCE | SCR_SMD | SCR_RES1_5 | SCR_RES1_4 | SCR_NS)
 	mov	x9,1	// NS[0]=1: EL2 and EL1 are non-secure
 	orr	x9,x9,(1<<1)	// IRQ[1]=1: IRQs routed to EL3 (TODO: do we want this?)
 	orr	x9,x9,(1<<2)	// FIQ[2]=1: FIQs routed to EL3 (TODO: do we want this?)
 	orr	x9,x9,(1<<3)	// EA[3]=1: SError routed to EL3 (TODO: do we want this?)
-			// SMD[7]=0: Secure Monitor Call (SMC) instructions are enabled
-	orr	x9,x9,(1<<8)	// HCE[8]=1: HVC instructions are enabled (TODO: do we want this?)
+	orr	x9,x9,(1<<4)	// RES1[4]=1: Reserved, RPi ampstub8.S sets this.
+	orr	x9,x9,(1<<5)	// RES1[5]=1: Reserved, RPi ampstub8.S sets this.
+			// RES0[6]=0: Reserved
+	orr	x9,x9,(1<<7)	// SMD[7]=1: Secure Monitor Call (SMC) instructions are disabled
+	orr	x9,x9,(1<<8)	// HCE[8]=1: HVC instructions are enabled
 			// SIF[9]=0: Secure state instruction fetches from Non-secure memory are permitted
 	orr	x9,x9,(1<<10)	// RW[10]=1: Next EL down uses AArch64
-	orr	x9,x9,(1<<11)	// ST[11]=1: Secure EL1 can access timers (TODO: do we want this?)
+	orr	x9,x9,(1<<11)	// ST[11]=1: Secure EL1 can access timers
 			// TWI[12]=0: EL2, EL1 and EL0 execution of WFI instructions is not trapped to EL3
 			// TWE[13]=0: EL2, EL1 and EL0 execution of WFE instructions is not trapped to EL3
 	msr	scr_el3, x9	// set secure configuration register
+
+	// Prepare to jump to EL2.
+	msr	sctlr_el2,xzr	// set EL2 system control register to safe defaults
+	msr	hcr_el2,xzr	// set EL2 hypervisor configuration register to safe defaults
 
 	mov	x9,0b1001	// M[3:0]=0b1001: EL2 with SP_EL2 (EL2h)
 			// M[4]=0: AArch64
@@ -147,12 +241,6 @@ init_el3:
 
 	adr	x9,init_el2
 	msr	elr_el3,x9	// set EL3 exception link register to start EL2 at init_el2
-
-	// Check that we have a device tree where we expect it.
-	bl	verify_device_tree	// verify device tree magic bytes
-	cmp	x0,ERROR_NONE	// check if device tree is valid
-	b.eq	.init_el3_done	// if valid, continue
-	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
 
 .init_el3_done:	// log EL3 initialization complete
 	adr	x0,init_el3_done_msg
@@ -201,23 +289,39 @@ init_el2:
 	mov	x1,init_el2_msg_size
 	bl	write_bytes_pri_uart
 
-
-	// Setup EL2 and prepare to jump to EL1.
-	msr	cptr_el2, xzr	// Disable trapping of CPTR_EL2 accesses or use of Adv.SIMD/FPU (TODO: do we want this?)
+	// Setup EL2.
 	ldr	x9,stack_top_el2_0
 	mov	sp,x9	// set EL2 stack pointer
 
 	adr	x9,el2_vector_table
 	msr	vbar_el2,x9	// set EL2 vector base address
 
-	msr	sctlr_el1,xzr	// set EL1 system control register to safe defaults
+	msr	cptr_el2, xzr	// Disable trapping of accesses to CPACR, CPACR_EL1, trace,
+			// Activity Monitor, SME, Streaming SVE, SVE, and Advanced
+			// SIMD and floating-point functionality to EL2.
 
+	msr	vttbr_el2,xzr	// VMID[63:48]=0: Although we are not using stage 2
+			// translation, NS.EL1 still cares about the VMID.
+
+	// Set up the EL2 hypervisor configuration register.
 	mov	x9,0	// VM[0]=0: EL1&0 stage 2 address translation disabled
 	orr	x9,x9,(1<<3)	// FMO[3]=1: Physical FIQ routing (TODO: do we want this?)
 	orr	x9,x9,(1<<4)	// IMO[4]=1: Physical IRQ routing (TODO: do we want this?)
 	orr	x9,x9,(1<<31)	// RW[31]=1: NS.EL1 is AArch64
 			// TGE[27]=0: Entry to NS.EL1 is possible
 	msr	hcr_el2,x9	// set hypervisor configuration register
+
+	// From ref. 3: Reads of the MPIDR_EL1 and MIDR_EL1 registers at NS.EL1 return virtual values. The
+	// registers which hold these virtual values, VMPIDR_EL2 and VPIDR_EL2, do not have defined reset
+	// values. Software should initialize these registers before entering EL1 for the first time. For
+	// this example, we are not using virtualization. This means that we can copy the physical values.
+	mrs	x9, midr_el1
+	msr	vpidr_el2, x9
+	mrs	x9, mpidr_el1
+	msr	vmpidr_el2, x9
+
+	// Prepare to jump to EL1.
+	msr	sctlr_el1,xzr	// set EL1 system control register to safe defaults
 
 	mov	x9,0b0101	// M[3:0]=0b0101: EL1 with SP_EL1 (EL1h).EL1 with SP_EL1 (EL1h)
 			// M[4]=0: AArch64
@@ -226,13 +330,6 @@ init_el2:
 			// A[8]=0: SError exceptions are not masked
 			// D[9]=0: Debug exceptions are not masked
 	msr	spsr_el2, x9	// set EL2 saved program status register
-
-	// TODO: study what these are doing
-	mrs	x9, midr_el1
-	msr	vpidr_el2, x9
-	mrs	x9, mpidr_el1
-	msr	vmpidr_el2, x9
-	msr	vttbr_el2,xzr	// Set VMID - Although we are not using stage 2 translation, NS.EL1 still cares about the VMID
 
 	adr	x9,init_el1
 	msr	elr_el2,x9	// set EL2 exception link register to start EL1 at init_el1
@@ -302,6 +399,13 @@ init_el1:
 	mov	x1,x9
 	mov	x2,userspace_size
 	bl	copy_bytes
+
+	// Check that we have a device tree where we expect it.
+	bl	verify_device_tree	// verify device tree magic bytes
+	cmp	x0,ERROR_NONE	// check if device tree is valid
+	b.eq	.init_el1_dt_good	// if valid, continue
+	bl	sleep_forever	// else, sleep forever (verify_device_tree logs error)
+.init_el1_dt_good:
 
 	/////////////////////////////////////////////////////////
 	// MMU setup
