@@ -404,7 +404,8 @@ init_el1:
 	adr	x0,userspace_start
 	mov	x1,x9
 	mov	x2,userspace_size
-	bl	copy_bytes
+	bl	copy_16b_aligned
+	// TODO: check for errors
 
 	// Enable MMU
 	bl	enable_el1_el0_mmu
@@ -433,16 +434,42 @@ init_el1:
 
 	eret		// return to EL0
 
-copy_bytes:
-	// Copy bytes from x0 to x1 for x2 bytes.
-	// x0 = source address
-	// x1 = destination address
-	// x2 = number of bytes to copy
-copy_bytes_loop:
-	ldrb	w3,[x0],1	// read byte from source and increment source address
-	strb	w3,[x1],1	// write byte to destination and increment destination address
+// NAME
+//	copy_16b_aligned - copy 16-bit aligned bytes
+//
+// SYNOPIS
+//	error copy_16b_aligned(void *src, void *dst, size size);
+//
+// DESCRIPTION
+//	copy_16b_aligned() copies 16-bit aligned bytes from src to dst for size bytes.
+//
+// RETURN VALUE
+//	Returns ERROR_NONE if the data is aligned, otherwise it returns ERROR.
+copy_16b_aligned:
+	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
+
+	// Check for alignment.
+	and	x9,x0,0xF
+	cbnz	x9,copy_16b_a_unaligned
+	and	x9,x1,0xF
+	cbnz	x9,copy_16b_a_unaligned
+	and	x9,x2,0xF
+	cbnz	x9,.copy_16b_a_unaligned
+	mov	x9,16
+	udiv	x2,x2,x9	// divide by 16 to get number of 16-byte blocks
+	b	copy_16b_a_loop
+
+.copy_16b_a_unaligned:
+	mov	x0,ERROR
+	b .copy_16b_a_out
+
+.copy_16b_a_loop:	ldp	x3,x4,[x0],16	// read bytes from source and increment source address
+	stp	x3,x4,[x1],16	// write byte to destination and increment destination address
 	subs	x2,x2,1		// decrement number of bytes to copy
-	b.ne	copy_bytes_loop	// if not done, repeat
+	b.ne	.copy_16b_a_loop	// if not done, repeat
+	mov	x0,ERROR_NONE	// return ERROR_NONE
+
+.copy_16b_a_out:	ldp	fp,lr,[sp],16	// restore frame pointer and link register
 	ret
 
 // NAME
@@ -1021,14 +1048,14 @@ bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
 good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.set	good_dtb_msg_size,(. - good_dtb_msg)
 	.balign	8
-userspace_addr:	.quad	0x40000000	// dest to copy userspace
+userspace_addr:	.quad	0x40000000	// dest to copy userspace - must be 16 byte aligned
 	.balign	8
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // For ease of initial development, we will put the userspace code right after the kernel code then copy it.. Ultimately it will be
 // compiled separately and loaded at the appropriate address.
-	.balign	8
+	.balign	16	// userspace_start must be 16-byte aligned
 userspace_start:	
 
 // NAME
