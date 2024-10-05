@@ -585,17 +585,17 @@ enable_el1_el0_mmu:
 
 	// Generate Translation Table
 	adr	x9,tt_l1_base	// x9
+
 	// TODO:
 	// first fill table with faults
 	// note: the way the space for the tables is reserved pre-fills it with zeros
 	// when loading the image into a simulation this saves time.  on real hardware
 	// you would want this zeroing loop.
-	//  ldr	x9,=tt_l1_base	// address of l1 table
-	//  mov	w2,512	// number of entries
+	//  mov	w10,512	// number of entries
 	//1:
-	//  stp	xzr,xzr,[x9],16               // 0x0 (fault) into table entries
-	//  sub	w2,w2,2                        // decrement count by 2, as we are writing two entries at once
-	//  cbnz	w2,1b
+	//  stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
+	//  sub	w10,w10,2	// decrement count by 2, as we are writing two entries at once
+	//  cbnz	w10,1b
 
 	// Translation Table Block Descriptor Format:
 	// [0]: valid bit
@@ -622,67 +622,59 @@ enable_el1_el0_mmu:
 			// address = 0x0
 	str	x10,[x9]	// write block descriptor to table
 
-	// TT block entries templates   (L1 and L2, NOT L3)
-	// Assuming table contents:
-	// 0 = b01000100 = Normal, Inner/Outer Non-Cacheable
-	// 1 = b11111111 = Normal, Inner/Outer WB/WA/RA
-	// 2 = b00000000 = Device-nGnRnE
-	.equ TT_S1_FAULT,           0x0
-	.equ TT_S1_NORMAL_NO_CACHE, 0x00000000000000401    // Index = 0, AF=1
-	.equ TT_S1_NORMAL_WBWA,     0x00000000000000405    // Index = 1, AF=1
-	.equ TT_S1_DEVICE_nGnRnE,   0x00600000000000409    // Index = 2, AF=1, PXN=1, UXN=1
-	.equ TT_S1_NON_SHARED,      (0 << 8)               // Non-shareable
-	.equ TT_S1_INNER_SHARED,    (3 << 8)               // Inner-shareable
-	.equ TT_S1_OUTER_SHARED,    (2 << 8)               // Outer-shareable
-	.equ TT_S1_PRIV_RW,         (0x0)
-	.equ TT_S1_PRIV_RO,         (0x2 << 6)
-	.equ TT_S1_USER_RW,         (0x1 << 6)
-	.equ TT_S1_USER_RO,         (0x3 << 6)
+	// Block 1: 0x4000_0000 - 0x7FFF_FFFF (1GB to 2GB)
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b11<<10)	// AF[10]=1: access flag
+			// AP[7:6]=0b11: EL1/2/3 RO, EL0 RO
+			// PXN[53]=0: EL1/2/3 can execute
+			// UXN[54]=0: EL0 can execute
+	orr	x10,x10,0x40000000	// address = 0x4000_0000
+	str	x10,[x9,8]	// write block descriptor to table
 
-	// [1]: 0x4000,0000 - 0x7FFF,FFFF
-	LDR      x0, =TT_S1_NORMAL_WBWA            // Entry template
-	ORR      x0, x0, #TT_S1_INNER_SHARED       // 'OR' with inner-shareable attribute
-	ORR      x0, x0, #TT_S1_USER_RO
-	ORR      x0, x0, #0x40000000               // 'OR' template with base physical address
-		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x9, #8]
-	// [1]: 0x8000,0000 - 0xBFFF,FFFF
-	LDR      x0, =TT_S1_DEVICE_nGnRnE          // Entry template
-	ORR      x0, x0, #0x80000000               // 'OR' template with base physical address
-		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x9, #16]
-	// [1]: 0xC000,0000 - 0xFFFF,FFFF
-	LDR      x0, =TT_S1_DEVICE_nGnRnE          // Entry template
-	ORR      x0, x0, #0xC0000000               // 'OR' template with base physical address
-		     // AP=0b00, EL1 RW, EL0 No Access
-	STR      x0, [x9, #24]
+	// Block 2: 0x8000_0000 - 0xBFFF_FFFF (2GB to 3GB)
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b010<<2)	// AttrIdx[4:2]=0b010: Attr2: Device-nGnRnE
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b11<<10)	// AF[10]=1: access flag
+			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
+	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 no execute
+	orr	x10,x10,(0b1<<54)	// UXN[53]=1: EL0 no execute
+	orr	x10,x10,0x80000000	// address = 0x4000_0000
+	str	x10,[x9,16]	// write block descriptor to table
 
-	DSB      SY
+	// Block 3: 0xC000_0000 - 0xFFFF_FFFF (3GB to 4GB)
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b010<<2)	// AttrIdx[4:2]=0b010: Attr2: Device-nGnRnE
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b11<<10)	// AF[10]=1: access flag
+			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
+	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 no execute
+	orr	x10,x10,(0b1<<54)	// UXN[53]=1: EL0 no execute
+	orr	x10,x10,0xC0000000	// address = 0x4000_0000
+	str	x10,[x9,24]	// write block descriptor to table
 
+	dsb      sy
 
-	// Enable MMU
-	// -----------
-	MOV      x0, #(1 << 0)                     // M=1           Enable the stage 1 MMU
-	ORR      x0, x0, #(1 << 2)                 // C=1           Enable data and unified caches
-	ORR      x0, x0, #(1 << 12)                // I=1           Enable instruction fetches to allocate into unified caches
-		     // A=0           Strict alignment checking disabled
-		     // SA=0          Stack alignment checking disabled
-		     // WXN=0         Write permission does not imply XN
-		     // EE=0          EL3 data accesses are little endian
-	orr	x0,x0,0x10000	// (bit 16 = 1): allow EL0 to use wfi instruction
-	orr	x0,x0,0x40000	// (bit 18 = 1): allow EL0 to use wfe instruction
+	// Set system control register.
+	mov	x0,(1<<0)	// M[0]=1: enable the stage 1 MMU
+			// A[1]=0: strict alignment checking disabled
+	orr	x0,x0,(1<<2)	// C[2]=1: enable data and unified caches
+			// SA[3]=0: Stack alignment checking disabled
+	orr	x0,x0,(1<<12)	// I[12]=1: enable instruction fetches to allocate into unified caches
+	orr	x0,x0,(1<<16)	// nTWI[16]=0b1: allow EL0 to use wfi instruction
+	orr	x0,x0,(1<<18)	// nTWE[18]=0b1: allow EL0 to use wfe instruction
+			// WXN[19]=0: Write permission does not imply XN
+			// EE[25]=0: EL3 data accesses are little endian
+	msr	sctlr_el1,x0	// set system control register
+	isb
 
-	MSR      SCTLR_EL1, x0
-	ISB
-
-	//
-	// MMU is now enabled
-	//
-
-	NOP
-	NOP
-	NOP
-	NOP
+	// MMU is now enabled. Not sure if these nop's are necessary.
+	nop
+	nop
+	nop
+	nop
 
 	ldp	fp,lr,[sp],16	// restore frame pointer and link register
 	ret
