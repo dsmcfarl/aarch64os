@@ -1,109 +1,202 @@
-// kernel.s
-//
-// An AArch64 kernel for Raspberry Pi 4 Model B (RPi4B).
-//
-// To build, first assemble:
-//
-//    aarch64-none-elf-as -g -c kernel.s -o kernel.o
-//
-// Then extract just the binary without the ELF header:
-//
-//    aarch64-none-elf-objcopy -O binary kernel.o kernel.bin
-//
-// No linking is required.
-//
-// Then prepare a FAT32 formatted SD card. The following are the minimum required files on the SD card. All except
-// kernel.bin and config.txt are from the Raspberry Pi firmware repository:
-//
-// - kernel.bin
-// - config.txt
-// - bcm2711-rpi-4-b.dtb
-// - fixup4.dat
-// - start4.elf
-// - overlays/disable-bt.dtbo
-//
-// The contents of config.txt must be:
-//
-//    # Defaults to loading kernel8.img if not specified. Better to be explicit.
-//    kernel=kernel.bin
-//
-//    # load the kernel to the memory address 0x0. This disables the armstub and allows booting into Exception level 3
-//    # with all cores running.
-//    kernel_old=1
-//
-//    # Set the ARM architecture to 64-bit. This causes the kernel to be relocated to 0x80000.
-//    # If kernel= is not set and we use the default kernel name of kernel8.img, we don't have to set this as it
-//    # relocates the kernel to 0x80000 anyway.
-//    arm_64bit=1
-//
-//    # Set the disable_commandline_tags command to 1 to stop start4.elf from filling in ATAGS (memory from 0x100)
-//    # before launching the kernel.
-//    # Boot fails with kernel_old=1 if this is not set because it overwrites the kernel.
-//    disable_commandline_tags=1
-//
-//    # Specifies how much memory, in megabytes, to reserve for the exclusive use of the GPU
-//    # 76MB is the default if more than 1GB of RAM is installed. Setting explicitly to 76MB to avoid confusion.
-//    # The top of the video core memory is at 0x0_4000_0000 (1024 MiB) so setting this to 76 means the video core
-//    # memory will start at 0x0_3B40_0000 (948 MiB).
-//    gpu_mem=76
-//
-//    # Set the device tree address. By default it loads at 0x100 which was being overwritten by the kernel when
-//    # kernel_old=1.
-//    # Setting to much higher address like 0x3AC00000 (just below video core memory) results in the following error:
-//    # "dterror: not a valid FDT - err -9"
-//    device_tree_address=0x20000000 # 512 MiB
-//
-//    # disable bluetooth so that UART0 (PL011) can be the primary UART. Otherwise, the mini UART is the primary UART
-//    # and it is not as full-featured as the PL011.
-//    dtoverlay=disable-bt
-//
-//    # log start4.elf debug output to UART
-//    uart_2ndstage=1
-//
-//    # Disable pull downs (required for JTAG)
-//    gpio=22-27=np
-//
-//    # Enable JTAG pins (i.e. GPIO22-GPIO27)
-//    enable_jtag_gpio=1
-//
-// For remote debugging with a JTAG debug probe and GDB, it is useful to have an ELF file with the start address
-// changed to 0x80000 which is where the 64-bit Arm core expects to find the kernel. This file can be used with
-// the GDB load command:
-//
-//     aarch64-none-elf-objcopy -O elf64-littleaarch64 --change-address 0x80000 kernel.o kernel.elf
-//
-// References:
-// 1. ARM Cortex-A72 MPCore Processor Technical Reference Manual: https://developer.arm.com/documentation/100095/0003/
-// 2. Arm Architecture Reference Manual for A-profile architecture: https://developer.arm.com/documentation/ddi0487/latest/
-// 3. AArch64 memory management examples: https://developer.arm.com/documentation/102416/0100
-//
-// Notes:
-// - use 4 byte alignment for all functions
-// - not using bss section since we are not using C so no need to zero out memory
-// - use `bl` instead of `b` even for 'no return' functions so the link register gets set for debugging
-//
-// Use simple code to allow bootstrapping with a minimal assembler:
-// - no linking
-// - no macros
-// - no sections
-// - minimal number of mnemonics and directives
-// - no expressions (using them for string lengths and similar for now, but can replace with constants)
-// - no local labels or local symbol names
-// - no pseudo-ops like ldr x1,=label, manually create literal pools when needed
-//
-// Register Usage:
-// - x0-x7: argument registers
-// - x8: indirect result location register and used for syscall number
-// - x9-x15: temporary registers
-// - x16-x17: intra-procedure-call temporary registers (can be used by linker generated call veneers and Procedure
-//            Linkage Table code). Not planning to use these, but avoid using them in case they are needed.
-// - x18: platform register (not currently using this for anything, but avoid this register in case it is needed)
-// - x19-x28: callee-saved registers
-// - x29 (fp): frame pointer
-// - x30 (lr): link register
-// - x31 (xzr): zero register
+/**********************************************************************************************************************
+kernel.s
 
-// Constants ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+AArch64OS Kernel
+================
+
+An AArch64 kernel for Raspberry Pi 4 Model B (RPi4B).
+
+Build
+-----
+First assemble:
+
+   aarch64-none-elf-as -g -c kernel.s -o kernel.o
+
+Then extract just the binary without the ELF header:
+
+   aarch64-none-elf-objcopy -O binary kernel.o kernel.bin
+
+No linking is required.
+
+Then prepare a FAT32 formatted SD card. The following are the minimum required files on the SD card. All except
+kernel.bin and config.txt are from the Raspberry Pi firmware repository:
+
+- kernel.bin
+- config.txt
+- bcm2711-rpi-4-b.dtb
+- fixup4.dat
+- start4.elf
+- overlays/disable-bt.dtbo
+
+The contents of config.txt must be:
+
+   # Defaults to loading kernel8.img if not specified. Better to be explicit.
+   kernel=kernel.bin
+
+   # load the kernel to the memory address 0x0. This disables the armstub and allows booting into Exception level 3
+   # with all cores running.
+   kernel_old=1
+
+   # Set the ARM architecture to 64-bit. This causes the kernel to be relocated to 0x80000.
+   # If kernel= is not set and we use the default kernel name of kernel8.img, we don't have to set this as it
+   # relocates the kernel to 0x80000 anyway.
+   arm_64bit=1
+
+   # Set the disable_commandline_tags command to 1 to stop start4.elf from filling in ATAGS (memory from 0x100)
+   # before launching the kernel.
+   # Boot fails with kernel_old=1 if this is not set because it overwrites the kernel.
+   disable_commandline_tags=1
+
+   # Specifies how much memory, in megabytes, to reserve for the exclusive use of the GPU
+   # 76MB is the default if more than 1GB of RAM is installed. Setting explicitly to 76MB to avoid confusion.
+   # The top of the video core memory is at 0x0_4000_0000 (1024 MiB) so setting this to 76 means the video core
+   # memory will start at 0x0_3B40_0000 (948 MiB).
+   gpu_mem=76
+
+   # Set the device tree address. By default it loads at 0x100 which was being overwritten by the kernel when
+   # kernel_old=1.
+   # Setting to much higher address like 0x3AC00000 (just below video core memory) results in the following error:
+   # "dterror: not a valid FDT - err -9"
+   device_tree_address=0x20000000 # 512 MiB
+
+   # disable bluetooth so that UART0 (PL011) can be the primary UART. Otherwise, the mini UART is the primary UART
+   # and it is not as full-featured as the PL011.
+   dtoverlay=disable-bt
+
+   # log start4.elf debug output to UART
+   uart_2ndstage=1
+
+   # Disable pull downs (required for JTAG)
+   gpio=22-27=np
+
+   # Enable JTAG pins (i.e. GPIO22-GPIO27)
+   enable_jtag_gpio=1
+
+Debugging
+---------
+For remote debugging with a JTAG debug probe and GDB, it is useful to have an ELF file with the start address
+changed to 0x80000 which is where the 64-bit Arm core expects to find the kernel. This file can be used with
+the GDB load command:
+
+    aarch64-none-elf-objcopy -O elf64-littleaarch64 --change-address 0x80000 kernel.o kernel.elf
+
+References
+----------
+1. ARM Cortex-A72 MPCore Processor Technical Reference Manual: https://developer.arm.com/documentation/100095/0003/
+2. Arm Architecture Reference Manual for A-profile architecture: https://developer.arm.com/documentation/ddi0487/latest/
+3. AArch64 memory management examples: https://developer.arm.com/documentation/102416/0100
+
+Notes
+-----
+- use 4 byte alignment for all functions
+- not using bss section since we are not using C so no need to zero out memory
+- use `bl` instead of `b` even for 'no return' functions so the link register gets set for debugging
+
+Use simple code to allow bootstrapping with a minimal assembler:
+- no linking
+- no macros
+- no sections
+- minimal number of mnemonics and directives
+- no expressions (using them for string lengths and similar for now, but can replace with constants)
+- no local labels or local symbol names
+- no pseudo-ops like ldr x1,=label, manually create literal pools when needed
+
+Register Usage
+--------------
+- x0-x7: argument registers
+- x8: indirect result location register and used for syscall number
+- x9-x15: temporary registers
+- x16-x17: intra-procedure-call temporary registers (can be used by linker generated call veneers and Procedure
+           Linkage Table code). Not planning to use these, but avoid using them in case they are needed.
+- x18: platform register (not currently using this for anything, but avoid this register in case it is needed)
+- x19-x28: callee-saved registers
+- x29 (fp): frame pointer
+- x30 (lr): link register
+- x31 (xzr): zero register
+
+Raspberry Pi 4 Model B Memory Map
+---------------------------------
+This is a memory map for the Raspberry Pi 4 Model B. The memory map is based on
+[Raspberry Pi BC2711 ARM Peripherals](https://datasheets.raspberrypi.org/bcm2711/bcm2711-peripherals.pdf)
+and represents the "Low Peripheral" mode, which is the default for the RPi4B. The only difference with this and the
+"Full 35-bit Address Map" is the main peripherals are moved to the top of the lower Reserved region, and the Arm Local
+Peripherals are moved to the bottom of the upper Reserved region.
+
+| Description             | Start         | End           | Size (MiB) |
+| ----------------------- | ------------- | ------------- | ---------- |
+| PCIe                    | 0x6_0000_0000 | 0x7_FFFF_FFFF |  8191      |
+| Reserved                | 0x4_C000_0000 | 0x6_0000_0000 |  5120      |
+| L2 Cache Non-Allocating | 0x4_8000_0000 | 0x4_C000_0000 |  1024      |
+| Reserved                | 0x4_4000_0000 | 0x4_8000_0000 |  1024      |
+| L2 Cache Allocating     | 0x4_0000_0000 | 0x4_4000_0000 |  1024      |
+| SDRAM (Arm)             | 0x1_0000_0000 | 0x4_0000_0000 | 12288      |
+| Arm Local Peripherals   | 0x0_FF80_0000 | 0x1_0000_0000 |     8      |
+| Main Peripherals        | 0x0_FC00_0000 | 0x0_FF80_0000 |    56      |
+| SDRAM (Arm)             | 0x0_4000_0000 | 0x0_FC00_0000 |  3008      |
+| SDRAM (Video Core)      | 0x0_3B40_0000 | 0x0_4000_0000 |    76      |
+| SDRAM (Arm)             | 0x0_0000_0000 | 0x0_3B40_0000 |   948      |
+
+There is also the "Legacy Master View" of the address map:
+
+| Description             | Start         | End           | Size (MiB) |
+| ----------------------- | ------------- | ------------- | ---------- |
+| SDRAM (Arm)             | 0x0_C000_0000 | 0x0_FFFF_FFFF |  1023      |
+| L2 Cache Non-Allocating | 0x0_8000_0000 | 0x0_C000_0000 |  1024      |
+| Main Peripherals        | 0x0_7C00_0000 | 0x0_8000_0000 |    64      |
+| Reserved                | 0x0_4000_0000 | 0x0_7c00_0000 |   960      |
+| L2 Cache Allocating     | 0x0_0000_0000 | 0x0_4000_0000 |  1024      |
+
+AArch64OS Memory Layout
+---------------------------------
+
+| Description           | Start                  | End                    | Notes                                      |
+| --------------------- | ---------------------- | ---------------------- | ------------------------------------------ |
+| arm local peripherals | 0x0_FF80_0000 (4088MB) | 0x1_0000_0000 (4096MB) | Device-nGnRnE, EL1=RW, not executable      |
+| main peripherals      | 0x0_FC00_0000 (4032MB) | 0x0_FF80_0000 (4088MB) | Device-nGnRnE, EL1=RW, not executable      |
+| unused                | 0x0_4000_0000 (1024MB) | 0x0_FC00_0000 (4032MB) |                                            |
+| video core memory     | 0x0_3B40_0000 ( 948MB) | 0x0_4000_0000 (1024MB) | Normal-noncacheable, EL1=RW, not executable|
+| userspace memory      | 0x0_2000_0000 ( 512MB) | 0x0_3B40_0000 ( 948MB) | Normal-cacheable, EL0=RW                   |
+| kernel memory         | 0x0_0080_0000 (   8MB) | 0x0_2000_0000 ( 512MB) | Normal-cacheable, EL1=RW, not executable   |
+| kernel image          | 0x0_0008_0000 ( 0.5MB) | 0x0_0080_0000 (   8MB) | Normal-cacheable, EL1=RO, executable       |
+| unused                | 0x0_0000_0000 (   0MB) | 0x0_0008_0000 ( 0.5MB) | bootloader load area; nothing useful here  |
+
+- The device tree is loaded by bootloader at 0x2000_0000 (about ~55KB), but not using it. If we need it we can move it.
+- Bootloader loads the kernel at 0x0 but start4.elf relocates it to 0x80000.
+
+Translation Tables
+------------------
+
+| Entry            | Description                      | Range                                     | Notes              |
+| ---------------- | -------------------------------- | ----------------------------------------- | ------------------ |
+| tt_l1_0[0]       | table descriptor (tt_l2_0_0)     | 0x0000_0000 - 0x3FFF_FFFF (0 to 1GB)      |                    |
+| tt_l1_0[1]       | invalid (0x0)                    | 0x4000_0000 - 0x7FFF_FFFF (1 to 2GB)      |                    |
+| tt_l1_0[2]       | invalid (0x0)                    | 0x8000_0000 - 0xBFFF_FFFF (2 to 3GB)      |                    |
+| tt_l1_0[3]       | table descriptor (tt_l2_0_3)     | 0xC000_0000 - 0xFFFF_FFFF (3 to 4GB)      |                    |
+| ---------------- | -------------------------------- | ----------------------------------------- | -------------------|
+| tt_l2_0[0-3]     | block descriptors (EL1 RO, exec) | 0x0000_0000 - 0x007F_FFFF (0 to 8MB)      | kernel text/data.ro|
+| tt_l2_0[4]       | block descriptor (EL1 RW)        | 0x0080_0000 - 0x009F_FFFF (8 to 10MB)     | kernel data        |
+| tt_l2_0[5-254]   | invalid (0x0)                    | 0x00A0_0000 - 0x1FDF_FFFF (10 to 510MB)   |                    |
+| tt_l2_0[255]     | block descriptor (EL1 RW)        | 0x1FE0_0000 - 0x1FFF_FFFF (510 to 512MB)  | kernel stack 0     |
+| tt_l2_0[256]     | block descriptor (EL0 RO, exec)  | 0x2000_0000 - 0x201F_FFFF (512 to 514MB)  | user text/data.ro  |
+| tt_l2_0[257-472] | invalid (0x0)                    | 0x2020_0000 - 0x3B1F_FFFF (514 to 946MB)  |                    |
+| tt_l2_0[473]     | block descriptor (EL0 RW)        | 0x3B20_0000 - 0x3B3F_FFFF (946 to 948MB)  | user stack 0       |
+| tt_l2_0[474-511] | block descriptors (EL1 RW)       | 0x3B40_0000 - 0x3FFF_FFFF (948 to 1024MB) | video core         |
+| ---------------- | -------------------------------- | ----------------------------------------- | ------------------ |
+| tt_l2_3[0-479]   | invalid (0x0)                    | 0xC000_0000 - 0xFBFF_FFFF (3072 to 4032MB)|                    |
+| tt_l2_3[480-511] | block descriptor (device)        | 0xFC00_0000 - 0xFFFF_FFFF (4032 to 4096MB)| peripherals        |
+
+- Using MMU because many Arm features depend on it, but using  a 1:1 mappping to keep simple.
+- tt_l1_0: 512 entries; either 1GB block descriptors or table descriptors for a level 2 table.
+- tt_l2_0_0: 512 entries; either 2MB block descriptors or table descriptors for a level 3 table.
+- tt_l2_0_3: 512 entries; either 2MB block descriptors or table descriptors for a level 3 table.
+- Kernel stack starts at 0x2000_0000 and grow down.
+- Userspace stack starts at 0x3B40_0000 and grows down.
+- Video core memory is RW to allow writing to framebuffer.
+- Kernel image cannot be EL0=RW or it automatically becomes PXN (privileged execute never) and cannot be executed.
+
+***********************************************************************************************************************/
+
+// Defines /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Standard error codes:
 	.set	ERROR_NONE,0
@@ -179,15 +272,6 @@ init_el3:
 	// Not EL3; log an error message and put the core to sleep
 	adr	x0,not_el3_msg
 	mov	x1,not_el3_msg_size
-	bl	write_bytes_pri_uart
-
-	// Append the exception level to the message.
-	mov	x0,x19	// x0 = exception level
-	adr	x1,buffer	// buffer to store exception level
-	mov	x2,buffer_size	// size of buffer
-	bl	uint64_to_ascii_hex	// convert exception level to ASCII hexadecimal
-	mov	x1,x0	// x1 = number of characters written
-	adr	x0,buffer	// buffer
 	bl	write_bytes_pri_uart
 
 	// put the core to sleep
@@ -272,15 +356,6 @@ init_el2:
 	mov	x1,not_el2_msg_size
 	bl	write_bytes_pri_uart
 
-	// Append the exception level to the message.
-	mov	x0,x19	// x0 = exception level
-	adr	x1,buffer	// buffer to store exception level
-	mov	x2,buffer_size	// size of buffer
-	bl	uint64_to_ascii_hex	// convert exception level to ASCII hexadecimal
-	mov	x1,x0	// x1 = number of characters written
-	adr	x0,buffer	// buffer
-	bl	write_bytes_pri_uart
-
 	// put the core to sleep
 	bl	sleep_forever
 
@@ -362,15 +437,6 @@ init_el1:
 	// Not EL1; log an error message and put the core to sleep
 	adr	x0,not_el1_msg
 	mov	x1,not_el1_msg_size
-	bl	write_bytes_pri_uart
-
-	// Append the exception level to the message.
-	mov	x0,x19	// x0 = exception level
-	adr	x1,buffer	// buffer to store exception level
-	mov	x2,buffer_size	// size of buffer
-	bl	uint64_to_ascii_hex	// convert exception level to ASCII hexadecimal
-	mov	x1,x0	// x1 = number of characters written
-	adr	x0,buffer	// buffer
 	bl	write_bytes_pri_uart
 
 	// put the core to sleep
@@ -548,7 +614,7 @@ enable_el1_el0_mmu:
 	stp    fp,lr,[sp,-16]!	// save frame pointer and link register
 
 	// Set translation table address.
-	adr	x9,tt_l1_base	// x9=address of level 1 translation table
+	adr	x9,tt_l1_0	// x9=address of level 1 translation table
 	msr	ttbr0_el1,x9	// set translation table base register 0
 
 	// Setup the three memory attribute types we will use.
@@ -584,7 +650,8 @@ enable_el1_el0_mmu:
 	isb
 
 	// Generate Translation Table
-	adr	x9,tt_l1_base	// x9
+
+	adr	x9,tt_l1_0	// x9
 
 	// TODO:
 	// first fill table with faults
@@ -978,13 +1045,8 @@ uint64_to_ascii_hex:
 // RW Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	.balign	0x1000	// 4KB alignment
-tt_l1_base:
+tt_l1_0:
   .fill 4096 , 1 , 0
-
-	.balign	8
-buffer:	.skip	16
-	.set	buffer_size,(. - buffer)
-
 
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1007,7 +1069,6 @@ stack_top_el0_1:	.quad	0x5FFE6000	// 8KB below
 stack_top_el0_2:	.quad	0x5FFE4000	// 8KB below
 stack_top_el0_3:	.quad	0x5FFE2000	// 8KB below
 	.balign	8
-	.balign	8
 pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
 	.balign	8
 init_el3_msg:	.ascii	"INFO: initlizing EL3...\r\n"
@@ -1016,7 +1077,7 @@ init_el3_msg:	.ascii	"INFO: initlizing EL3...\r\n"
 init_el3_done_msg:	.ascii	"INFO: EL3 initialization complete\r\n"
 	.set	init_el3_done_msg_size,(. - init_el3_done_msg)
 	.balign	8
-not_el3_msg:	.ascii	"ERROR: not EL3, putting core to sleep: EL="
+not_el3_msg:	.ascii	"ERROR: not EL3, putting core to sleep"
 	.set	not_el3_msg_size,(. - not_el3_msg)
 	.balign	8
 init_el2_msg:	.ascii	"INFO: initlizing EL2...\r\n"
@@ -1025,7 +1086,7 @@ init_el2_msg:	.ascii	"INFO: initlizing EL2...\r\n"
 init_el2_done_msg:	.ascii	"INFO: EL2 initialization complete\r\n"
 	.set	init_el2_done_msg_size,(. - init_el2_done_msg)
 	.balign	8
-not_el2_msg:	.ascii	"ERROR: not EL2, putting core to sleep: EL="
+not_el2_msg:	.ascii	"ERROR: not EL2, putting core to sleep"
 	.set	not_el2_msg_size,(. - not_el2_msg)
 	.balign	8
 init_el1_msg:	.ascii	"INFO: initlizing EL1...\r\n"
@@ -1034,7 +1095,7 @@ init_el1_msg:	.ascii	"INFO: initlizing EL1...\r\n"
 init_el1_done_msg:	.ascii	"INFO: EL1 initialization complete\r\n"
 	.set	init_el1_done_msg_size,(. - init_el1_done_msg)
 	.balign	8
-not_el1_msg:	.ascii	"ERROR: not EL1, putting core to sleep: EL="
+not_el1_msg:	.ascii	"ERROR: not EL1, putting core to sleep"
 	.set	not_el1_msg_size,(. - not_el1_msg)
 	.balign	8
 init_el0_msg:	.ascii	"INFO: initlizing EL0...\r\n"
@@ -1043,7 +1104,7 @@ init_el0_msg:	.ascii	"INFO: initlizing EL0...\r\n"
 init_el0_done_msg:	.ascii	"INFO: EL0 initialization complete\r\n"
 	.set	init_el0_done_msg_size,(. - init_el0_done_msg)
 	.balign	8
-not_el0_msg:	.ascii	"ERROR: not EL0, putting core to sleep: EL="
+not_el0_msg:	.ascii	"ERROR: not EL0, putting core to sleep"
 	.set	not_el0_msg_size,(. - not_el0_msg)
 	.balign	8
 bad_dtb_msg:	.ascii	"ERROR: no valid device tree found\r\n"
