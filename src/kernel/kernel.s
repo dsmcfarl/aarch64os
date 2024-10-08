@@ -166,24 +166,24 @@ AArch64OS Memory Layout
 Translation Tables
 ------------------
 
-| Entry            | Description                      | Range                                     | Notes              |
-| ---------------- | -------------------------------- | ----------------------------------------- | ------------------ |
-| tt_l1_0[0]       | table descriptor (tt_l2_0_0)     | 0x0000_0000 - 0x3FFF_FFFF (0 to 1GB)      |                    |
-| tt_l1_0[1]       | invalid (0x0)                    | 0x4000_0000 - 0x7FFF_FFFF (1 to 2GB)      |                    |
-| tt_l1_0[2]       | invalid (0x0)                    | 0x8000_0000 - 0xBFFF_FFFF (2 to 3GB)      |                    |
-| tt_l1_0[3]       | table descriptor (tt_l2_0_3)     | 0xC000_0000 - 0xFFFF_FFFF (3 to 4GB)      |                    |
-| ---------------- | -------------------------------- | ----------------------------------------- | -------------------|
-| tt_l2_0[0-3]     | block descriptors (EL1 RO, exec) | 0x0000_0000 - 0x007F_FFFF (0 to 8MB)      | kernel text/data.ro|
-| tt_l2_0[4]       | block descriptor (EL1 RW)        | 0x0080_0000 - 0x009F_FFFF (8 to 10MB)     | kernel data        |
-| tt_l2_0[5-254]   | invalid (0x0)                    | 0x00A0_0000 - 0x1FDF_FFFF (10 to 510MB)   |                    |
-| tt_l2_0[255]     | block descriptor (EL1 RW)        | 0x1FE0_0000 - 0x1FFF_FFFF (510 to 512MB)  | kernel stack 0     |
-| tt_l2_0[256]     | block descriptor (EL0 RO, exec)  | 0x2000_0000 - 0x201F_FFFF (512 to 514MB)  | user text/data.ro  |
-| tt_l2_0[257-472] | invalid (0x0)                    | 0x2020_0000 - 0x3B1F_FFFF (514 to 946MB)  |                    |
-| tt_l2_0[473]     | block descriptor (EL0 RW)        | 0x3B20_0000 - 0x3B3F_FFFF (946 to 948MB)  | user stack 0       |
-| tt_l2_0[474-511] | block descriptors (EL1 RW)       | 0x3B40_0000 - 0x3FFF_FFFF (948 to 1024MB) | video core         |
-| ---------------- | -------------------------------- | ----------------------------------------- | ------------------ |
-| tt_l2_3[0-479]   | invalid (0x0)                    | 0xC000_0000 - 0xFBFF_FFFF (3072 to 4032MB)|                    |
-| tt_l2_3[480-511] | block descriptor (device)        | 0xFC00_0000 - 0xFFFF_FFFF (4032 to 4096MB)| peripherals        |
+| Entry             | Description                      | Range                                     | Notes             |
+| ----------------- | -------------------------------- | ----------------------------------------- | ----------------- |
+| tt_l1_0[0]        | table descriptor (tt_l2_0_0)     | 0x0000_0000 - 0x3FFF_FFFF (0 to 1GB)      |                   |
+| tt_l1_0[1]        | invalid (0x0)                    | 0x4000_0000 - 0x7FFF_FFFF (1 to 2GB)      |                   |
+| tt_l1_0[2]        | invalid (0x0)                    | 0x8000_0000 - 0xBFFF_FFFF (2 to 3GB)      |                   |
+| tt_l1_0[3]        | table descriptor (tt_l2_0_3)     | 0xC000_0000 - 0xFFFF_FFFF (3 to 4GB)      |                   |
+| ----------------- | -------------------------------- | ----------------------------------------- | ------------------|
+| tt_l2_0_0[0-3]    | block descriptors (EL1 RO, exec) | 0x0000_0000 - 0x007F_FFFF (0 to 8MB)      |kernel text/data.ro|
+| tt_l2_0_0[4]      | block descriptor (EL1 RW)        | 0x0080_0000 - 0x009F_FFFF (8 to 10MB)     | kernel data       |
+| tt_l2_0_0[5-254]  | invalid (0x0)                    | 0x00A0_0000 - 0x1FDF_FFFF (10 to 510MB)   |                   |
+| tt_l2_0_0[255]    | block descriptor (EL1 RW)        | 0x1FE0_0000 - 0x1FFF_FFFF (510 to 512MB)  | kernel stack 0    |
+| tt_l2_0_0[256]    | block descriptor (EL0 RO, exec)  | 0x2000_0000 - 0x201F_FFFF (512 to 514MB)  | user text/data.ro |
+| tt_l2_0_0[257-472]| invalid (0x0)                    | 0x2020_0000 - 0x3B1F_FFFF (514 to 946MB)  |                   |
+| tt_l2_0_0[473]    | block descriptor (EL0 RW)        | 0x3B20_0000 - 0x3B3F_FFFF (946 to 948MB)  | user stack 0      |
+| tt_l2_0_0[474-511]| block descriptors (EL1 RWnocache)| 0x3B40_0000 - 0x3FFF_FFFF (948 to 1024MB) | video core        |
+| ----------------- | -------------------------------- | ----------------------------------------- | ----------------- |
+| tt_l2_0_3[0-479]  | invalid (0x0)                    | 0xC000_0000 - 0xFBFF_FFFF (3072 to 4032MB)|                   |
+| tt_l2_0_3[480-511]| block descriptor (device)        | 0xFC00_0000 - 0xFFFF_FFFF (4032 to 4096MB)| peripherals       |
 
 - Using MMU because many Arm features depend on it, but using  a 1:1 mappping to keep simple.
 - tt_l1_0: 512 entries; either 1GB block descriptors or table descriptors for a level 2 table.
@@ -611,9 +611,9 @@ verify_device_tree:
 //	enable_el1_el0_mmu() enables the EL1 and EL0 MMU.
 //
 enable_el1_el0_mmu:
-	stp    fp,lr,[sp,-16]!	// save frame pointer and link register
+	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
 
-	// Set translation table address.
+	// Set translation table address (start at level 1, and only use ttbr0_el1, not ttbr1_el1).
 	adr	x9,tt_l1_0	// x9=address of level 1 translation table
 	msr	ttbr0_el1,x9	// set translation table base register 0
 
@@ -649,20 +649,7 @@ enable_el1_el0_mmu:
 	dsb	sy
 	isb
 
-	// Generate Translation Table
-
-	adr	x9,tt_l1_0	// x9
-
-	// TODO:
-	// first fill table with faults
-	// note: the way the space for the tables is reserved pre-fills it with zeros
-	// when loading the image into a simulation this saves time.  on real hardware
-	// you would want this zeroing loop.
-	//  mov	w10,512	// number of entries
-	//1:
-	//  stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
-	//  sub	w10,w10,2	// decrement count by 2, as we are writing two entries at once
-	//  cbnz	w10,1b
+	// Generate Translation Tables.
 
 	// Translation Table Block Descriptor Format:
 	// [0]: valid bit
@@ -678,51 +665,159 @@ enable_el1_el0_mmu:
 	// PXN[53]: privileged execute never bit
 	// UXN[54]: unprivileged execute never bit
 
-	// Block 0: 0x0000_0000 - 0x3FFF_FFFF (0GB to 1GB)
+	// First fill tables with faults.
+	adr	x9,tt_l1_0	// x9=address of level 1 translation table
+	mov	w10,512	// number of entries
+.enable_e_e_m_1:	stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
+	sub	w10,w10,2	// decrement count by 2 (writing two entries at once)
+	cbnz	w10,.enable_e_e_m_1
+
+	adr	x9,tt_l2_0_0	// x9=address of level 2 translation table 0
+	mov	w10,512	// number of entries
+.enable_e_e_m_2:	stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
+	sub	w10,w10,2	// decrement count by 2 (writing two entries at once)
+	cbnz	w10,.enable_e_e_m_2
+
+	adr	x9,tt_l2_0_3	// x9=address of level 2 translation table 3
+	mov	w10,512	// number of entries
+.enable_e_e_m_3:	stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
+	sub	w10,w10,2	// decrement count by 2 (writing two entries at once)
+	cbnz	w10,.enable_e_e_m_3
+
+	// Populate level 1 translation table 0.
+	adr	x9,tt_l1_0	// x9=address of level 1 translation table
+	// tt_l1_0[0]: table descriptor tt_l2_0_0, 0x0000_0000 - 0x3FFF_FFFF (0GB to 1GB)
+	mov	x10,0b11	// valid bit, table type
+	adr	x11,tt_l2_0_0
+	orr	x10,x10,x11	// address = tt_l2_0_0
+	str	x10,[x9],8	// write block descriptor to table
+
+	// skip 1-2
+	add	x9,x9,8*(2-1+1)
+
+	// tt_l1_0[3]: table descriptor tt_l2_0_3, 0xC000_0000 - 0xFFFF_FFFF (3GB to 4GB)
+	mov	x10,0b11	// valid bit, table type
+	adr	x11,tt_l2_0_3
+	orr	x10,x10,x11	// address = tt_l2_0_3
+	str	x10,[x9],8	// write block descriptor to table
+
+	// Populate level 2 translation table 0.
+	adr	x9,tt_l2_0_0	// x9=address of level 2 translation table 0
+	// tt_l2_0_0[0]: block descriptor (EL1 RO, exec), 0x0000_0000 - 0x001F_FFFF (0 to 2MB)kern text/ro
 	mov	x10,0b01	// valid bit, block type
 	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b10<<6)	// AP[7:6]=0b10: EL1/2/3 RO, EL0 No Access
 	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
 	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
-			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
 			// PXN[53]=0: EL1/2/3 can execute
 			// UXN[54]=0: EL0 can execute (EL0 can't access though)
 			// address = 0x0
-	str	x10,[x9]	// write block descriptor to table
+	str	x10,[x9],8	// write block descriptor to table
 
-	// Block 1: 0x4000_0000 - 0x7FFF_FFFF (1GB to 2GB)
+	// tt_l2_0_0[1]: block descriptor (EL1 RO, exec), 0x0020_0000 - 0x003F_FFFF (2 to 4MB)kernel text/ro
 	mov	x10,0b01	// valid bit, block type
 	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b10<<6)	// AP[7:6]=0b10: EL1/2/3 RO, EL0 No Access
 	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
-	orr	x10,x10,(0b11<<10)	// AF[10]=1: access flag
-			// AP[7:6]=0b11: EL1/2/3 RO, EL0 RO
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
 			// PXN[53]=0: EL1/2/3 can execute
-			// UXN[54]=0: EL0 can execute
-	orr	x10,x10,0x40000000	// address = 0x4000_0000
-	str	x10,[x9,8]	// write block descriptor to table
+			// UXN[54]=0: EL0 can execute (EL0 can't access though)
+	orr	x10,x10,0x00200000	// address = 0x0020_0000
+	str	x10,[x9],8	// write block descriptor to table
 
-	// Block 2: 0x8000_0000 - 0xBFFF_FFFF (2GB to 3GB)
+	// tt_l2_0_0[2]: block descriptor (EL1 RO, exec), 0x0040_0000 - 0x005F_FFFF (4 to 6MB)kernel text/ro
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b10<<6)	// AP[7:6]=0b10: EL1/2/3 RO, EL0 No Access
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+			// PXN[53]=0: EL1/2/3 can execute
+			// UXN[54]=0: EL0 can execute (EL0 can't access though)
+	orr	x10,x10,0x00400000	// address = 0x0040_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// tt_l2_0_0[3]: block descriptor (EL1 RO, exec), 0x0060_0000 - 0x007F_FFFF (6 to 8MB)kernel text/ro
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b10<<6)	// AP[7:6]=0b10: EL1/2/3 RO, EL0 No Access
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+			// PXN[53]=0: EL1/2/3 can execute
+			// UXN[54]=0: EL0 can execute (EL0 can't access though)
+	orr	x10,x10,0x00600000	// address = 0x0060_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// tt_l2_0_0[4]: block descriptor (EL1 RW), 0x0080_0000 - 0x009F_FFFF (8 to 10MB), kernel data
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
+	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
+	orr	x10,x10,0x00800000	// address = 0x0080_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// skip 5-254
+	add	x9,x9,8*(254-5+1)
+
+	// tt_l2_0_0[255]: block descriptor (EL1 RW), 0x1FE0_0000 - 0x1FFF_FFFF (510 to 512), kernel stack 0
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
+	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
+	orr	x10,x10,0x1FE00000	// address = 0x1FE0_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// tt_l2_0_0[256]: block descriptor (EL0 RO, exec), 0x2000_0000 - 0x201F_FFFF (512 to 514MB), user text/data.ro
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b11<<6)	// AP[7:6]=0b11: EL1/2/3 RO, EL0 RO
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+			// PXN[53]=0: EL1/2/3 can execute
+			// UXN[54]=0: EL0 can execute (EL0 can't access though)
+	orr	x10,x10,0x20000000	// address = 0x2000_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// skip 257-472
+	add	x9,x9,8*(472-257+1)
+
+	// tt_l2_0_0[473]: block descriptor (EL0 RW), 0x3B20_0000 - 0x3B3F_FFFF (946 to 948MB), user stack 0
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b01<<6)	// AP[7:6]=0b01: EL1/2/3 RW, EL0 RW
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
+	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
+	adrp	x11,0x3B200000	// out of range for adr and orr, so use adrp
+	orr	x10,x10,x11	// address = 0x3B20_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// TODO: video core tt_l2_0_0[474-511]
+	// tt_l2_0_0[474-511]: block descriptors (EL1 RWnocache), 0x3B40_0000 - 0x3FFF_FFFF (948 to 1024MB), video core
+
+	// TODO: tt_l2_0_3[480-511] (just making full block device-nGnRnE for now)
+	// tt_l2_0_3[480-511]: block descriptor (device), 0xFC00_0000 - 0xFFFF_FFFF (4032 to 4096MB), peripherals
+
+	// TODO: this is temporary
+	// tt_l1_0[3]: block descriptor, 0xC000_0000 - 0xFFFF_FFFF (3GB to 4GB)
+	adr	x9,tt_l1_0	// x9=address of level 1 translation table
 	mov	x10,0b01	// valid bit, block type
 	orr	x10,x10,(0b010<<2)	// AttrIdx[4:2]=0b010: Attr2: Device-nGnRnE
+			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
 	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
 	orr	x10,x10,(0b11<<10)	// AF[10]=1: access flag
-			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
 	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 no execute
 	orr	x10,x10,(0b1<<54)	// UXN[53]=1: EL0 no execute
-	orr	x10,x10,0x80000000	// address = 0x4000_0000
-	str	x10,[x9,16]	// write block descriptor to table
-
-	// Block 3: 0xC000_0000 - 0xFFFF_FFFF (3GB to 4GB)
-	mov	x10,0b01	// valid bit, block type
-	orr	x10,x10,(0b010<<2)	// AttrIdx[4:2]=0b010: Attr2: Device-nGnRnE
-	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
-	orr	x10,x10,(0b11<<10)	// AF[10]=1: access flag
-			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
-	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 no execute
-	orr	x10,x10,(0b1<<54)	// UXN[53]=1: EL0 no execute
-	orr	x10,x10,0xC0000000	// address = 0x4000_0000
+	orr	x10,x10,0xC0000000	// address = 0xC000_0000
 	str	x10,[x9,24]	// write block descriptor to table
 
-	dsb      sy
+	dsb	sy
 
 	// Set system control register.
 	mov	x0,(1<<0)	// M[0]=1: enable the stage 1 MMU
@@ -1046,28 +1141,23 @@ uint64_to_ascii_hex:
 
 	.balign	0x1000	// 4KB alignment
 tt_l1_0:
-  .fill 4096 , 1 , 0
+	.fill 4096 , 1 , 0
+	.balign	0x1000	// 4KB alignment
+tt_l2_0_0:
+	.fill 4096 , 1 , 0
+	.balign	0x1000	// 4KB alignment
+tt_l2_0_3:
+	.fill 4096 , 1 , 0
 
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// These stack address must match the addresses in the translation tables.
 	.balign	8
 stack_top_el3_0:	.quad	0x20000000	// 512MB
-stack_top_el3_1:	.quad	0x1FFFE000	// 8KB below
-stack_top_el3_2:	.quad	0x1FFFC000	// 8KB below
-stack_top_el3_3:	.quad	0x1FFFA000	// 8KB below
-stack_top_el2_0:	.quad	0x1FFF8000	// 8KB below
-stack_top_el2_1:	.quad	0x1FFF6000	// 8KB below
-stack_top_el2_2:	.quad	0x1FFF4000	// 8KB below
-stack_top_el2_3:	.quad	0x1FFF2000	// 8KB below
-stack_top_el1_0:	.quad	0x1FFF0000	// 8KB below
-stack_top_el1_1:	.quad	0x1FFEE000	// 8KB below
-stack_top_el1_2:	.quad	0x1FFEC000	// 8KB below
-stack_top_el1_3:	.quad	0x1FFEA000	// 8KB below
-
-stack_top_el0_0:	.quad	0x60000000	// 1.5GB
-stack_top_el0_1:	.quad	0x5FFE6000	// 8KB below
-stack_top_el0_2:	.quad	0x5FFE4000	// 8KB below
-stack_top_el0_3:	.quad	0x5FFE2000	// 8KB below
+stack_top_el2_0:	.quad	0x1FFF8000
+stack_top_el1_0:	.quad	0x1FFF0000
+	.balign	8
+stack_top_el0_0:	.quad	0x3B400000	// 948MB (right below video core)
 	.balign	8
 pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
 	.balign	8
@@ -1116,7 +1206,7 @@ good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 not_balign_16_msg:	.ascii	"ERROR: address not 16-byte aligned\r\n"
 	.set	not_balign_16_msg_size,(. - not_balign_16_msg)
 	.balign	8
-userspace_addr:	.quad	0x40000000	// dest to copy userspace - must be 16 byte aligned
+userspace_addr:	.quad	0x20000000	// dest to copy userspace - must match translation table and must be 16 byte aligned
 	.balign	8
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1148,5 +1238,7 @@ init:
 
 	.balign	16	// userspace_size must be 16-byte aligned
 	.set	userspace_size,(. - userspace_start)
+
+// TODO: if we have any RW data for userspace it needs to be copied to a RW block from the translation table.
 
 // vim: set ts=20:
