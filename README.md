@@ -38,8 +38,8 @@ TODO: Add a list of required packages.
 git clone git@github.com:dsmcfarl/aarch64os.git
 cd aarch64os
 source .envrc  # adds bin/ to PATH and sets some environment variables
-get-tools  # downloads and builds tools to tools/ directory
-qemu
+get-tools  # installs system dependencies then downloads and builds tools to tools/ directory
+run-qemu
 ```
 
 ## Organization
