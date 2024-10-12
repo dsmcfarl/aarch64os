@@ -29,18 +29,59 @@ likely evolve, and when the 'fun' stops, so will the project.
 
 Assumes a Debian-based system, but should work on other systems with minor modifications.
 
-You may get errors when running get-tools if you don't have some required system libraries installed that openocd or
-qemu depend on.
-
-TODO: Add a list of required packages.
+The `bin/get-tools` script has been tested on a base install of Debian bookworm to ensure all required system
+dependencies are listed. If you are using a different system, you may need to install additional packages and/or adjust
+the script.
 
 ```sh
 git clone git@github.com:dsmcfarl/aarch64os.git
 cd aarch64os
 source .envrc  # adds bin/ to PATH and sets some environment variables
-get-tools  # installs system dependencies then downloads and builds tools to tools/ directory
-run-qemu
+get-tools      # installs system dependencies then downloads and builds tools to tools/ directory
+qemu           # runs the operating system in QEMU using bin/qemu script
 ```
+
+You should see something similar to:
+
+```
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-pcie has been disabled!
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-rng200 has been disabled!
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-thermal has been disabled!
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-genet-v5 has been disabled!
+INFO: initlizing EL3...
+INFO: EL3 initialization complete
+INFO: initlizing EL2...
+INFO: EL2 initialization complete
+INFO: initlizing EL1...
+INFO: found valid device tree
+INFO: EL1 initialization complete
+```
+
+You can stop QEMU with `Ctrl-a c` to get to the QEMU monitor. At the `(qemu) ` prompt, type `info registers` then enter.
+
+You should see something like:
+
+```
+(qemu) info registers
+
+CPU#0
+ PC=0000000020000000 X00=0000000000000003 X01=0000000000000004
+X02=0000000000000000 X03=0000000000000000 X04=0000000000000000
+X05=0000000000000000 X06=0000000000000000 X07=0000000000000000
+X08=0000000000000000 X09=000000000008614b X10=000000000000000a
+X11=0000000000000090 X12=00000000fe201000 X13=0000000000000000
+X14=0000000000000000 X15=0000000000000000 X16=0000000000000000
+X17=0000000000000000 X18=0000000000000000 X19=0000000000000001
+X20=0000000000000000 X21=0000000000000000 X22=0000000000000000
+X23=0000000000000000 X24=0000000000000000 X25=0000000000000000
+X26=0000000000000000 X27=0000000000000000 X28=0000000000000000
+X29=0000000000000000 X30=0000000000080208  SP=000000003b400000
+PSTATE=00000000 ---- NS EL0t    FPU disabled
+(qemu)
+```
+
+If everything was successfule, X00 should contain 3 and X01 should contain 4.
+
 
 ## Organization
 
