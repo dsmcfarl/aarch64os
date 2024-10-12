@@ -1210,35 +1210,11 @@ userspace_addr:	.quad	0x20000000	// dest to copy userspace - must match translat
 	.balign	8
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	.set	userspace_size,0x40000	// TODO: 256KB for now
 
-// For ease of initial development, we will put the userspace code right after the kernel code then copy it.. Ultimately it will be
+// For ease of initial development, userspace init is concatenated here. Eventually, userspace will be loaded from disk.
 // compiled separately and loaded at the appropriate address.
 	.balign	16	// userspace_start must be 16-byte aligned
 userspace_start:	
-
-// NAME
-//	init - userspace entrypoint
-//
-// SYNOPIS
-//	void init(void);
-//
-// DESCRIPTION
-//	init() is the entrypoint for userspace. It is called by the kernel after the kernel has initialized the exception levels.
-// RETURN VALUE
-//	Does not return.
-init:
-	// TODO: remove
-.init_loop:
-	mov x0, 0x3
-	nop
-	nop
-	mov x1, 0x4
-	wfe	// wait for an event
-	b	.init_loop
-
-	.balign	16	// userspace_size must be 16-byte aligned
-	.set	userspace_size,(. - userspace_start)
-
-// TODO: if we have any RW data for userspace it needs to be copied to a RW block from the translation table.
 
 // vim: set ts=20:

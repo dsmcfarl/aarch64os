@@ -3,44 +3,39 @@ define hook-quit
 	set confirm off
 end
 
-# custom command to reset the RPi4B and load an updated kernel must wait about
-# 15 seconds to ensure reset is complete and openocd is reconnected
-define reset
-
+# load the kernel and init (appended to kernel), load symbols, and set the program counter
+define buildload
 	shell printf '\r\nbuilding kernel...\r\n'
 	shell build
-	# Specify the kernel we want to load when we run `load`. This file must have an
-	# ELF header specifying a start address of 0x80000.
-	file build/kernel/kernel.elf
+
+	shell printf 'loading kernel...\r\n'
+	restore build/kernel/kernel.bin binary 0x80000
+	add-symbol-file build/kernel/kernel.sym 0x80000
+	add-symbol-file build/init/init.sym 0x20000000
+
+	shell printf 'setting program counter...\r\n'
+	set $pc=0x80000
+end
+
+# reset the RPi4B using the srst signal (connected to J2 RUN pin) and wait 15
+# second for reboot and openocd to reconnect then halt
+define resethalt
 	shell printf 'resetting...\r\n'
 	monitor adapter assert srst
 	shell sleep 1
 	monitor adapter deassert srst
-	shell sleep 1
+
 	shell printf 'waiting 15 seconds...\r\n'
-	shell sleep 14
+	shell sleep 15
+
+	shell printf 'halting...\r\n'
 	monitor halt
-	shell sleep 1
-	shell printf 'loading kernel...\r\n'
-	load
-	# set program counter to kernel entry point
-	set $pc=0x80000
-	# redraw TUI
-	refresh
 end
 
-define fileload
-
-	shell printf '\r\nbuilding kernel...\r\n'
-	shell build
-	# Specify the kernel we want to load when we run `load`. This file must have an
-	# ELF header specifying a start address of 0x80000.
-	file build/kernel/kernel.elf
-	shell sleep 1
-	shell printf 'loading kernel...\r\n'
-	load
-	# set program counter to kernel entry point
-	set $pc=0x80000
+# build, reset, and load the kernel
+define resetload
+	resethalt
+	buildload
 	# redraw TUI
 	refresh
 end
@@ -53,4 +48,4 @@ layout split
 layout regs
 
 # Call our custom command to reset and load
-# reset
+# resetload

@@ -7,22 +7,54 @@ OBJDUMP=${PREFIX}objdump
 # cleanup last build
 rm -rf $BUILD
 
-# build kernel
+#######################################################################################################################
+# kernel
+#######################################################################################################################
 mkdir -p $BUILD/kernel
+
 # assemble
 $AS -g -c $SRC/kernel/kernel.s -o $BUILD/kernel/kernel.o
-# extract just the binary without the ELF header; this is what is copied to the SD card
+
+# extract just the binary without the ELF header; RPi4 bootloader does not want an ELF header
 $OBJCOPY -O binary $BUILD/kernel/kernel.o $BUILD/kernel/kernel.bin
-# kernel.elf is used with gdb; must have the address changed to 0x80000 for the `load` command to work
-$OBJCOPY -O elf64-littleaarch64 --change-address 0x80000 $BUILD/kernel/kernel.o $BUILD/kernel/kernel.elf
-# kernel.dump is used for inspecting the kernel
-$OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
+
+# extract the debug information from the ELF file (used with gdb)
+$OBJCOPY --only-keep-debug $BUILD/kernel/kernel.o $BUILD/kernel/kernel.sym
+
+# extract the disassembly from the ELF file (used for debugging)
+#$OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
+
 # loop.bin is used as a dummy kernel that just loops forever waiting for gdb to connect and load the real kernel for development
 $AS -g -c $SRC/kernel/loop.s -o $BUILD/kernel/loop.o
 $OBJCOPY -O binary $BUILD/kernel/loop.o $BUILD/kernel/loop.bin
 
-# build boot directory
+
+#######################################################################################################################
+# init
+#######################################################################################################################
+mkdir -p $BUILD/init
+
+# assemble
+$AS -g -c $SRC/init/init.s -o $BUILD/init/init.o
+
+# extract just the binary without the ELF header; RPi4 bootloader does not want an ELF header
+$OBJCOPY -O binary $BUILD/init/init.o $BUILD/init/init.bin
+
+# extract the debug information from the ELF file (used with gdb)
+$OBJCOPY --only-keep-debug $BUILD/init/init.o $BUILD/init/init.sym
+
+# extract the disassembly from the ELF file (used for debugging)
+#$OBJDUMP -D $BUILD/init/init.o > $BUILD/init/init.dump
+
+# combine the kernel and init into a single binary (kernel copies init to 0x20000000 and jumps to it once in EL0)
+cat $BUILD/init/init.bin >> $BUILD/kernel/kernel.bin
+
+
+#######################################################################################################################
+# boot directory
+#######################################################################################################################
 mkdir -p $BUILD/boot/overlays
+
 cp $TOOLS/firmware/boot/bcm2711-rpi-4-b.dtb $BUILD/boot/
 cp $TOOLS/firmware/boot/fixup4.dat $BUILD/boot/
 cp $TOOLS/firmware/boot/start4.elf $BUILD/boot/
