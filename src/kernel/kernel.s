@@ -1015,6 +1015,10 @@ el1_curr_el_spx_serror:
 	.balign	0x80
 // Handle synchronous exceptions from a lower EL (AArch64)
 el1_lower_el_aarch64_sync:
+	mrs	x9,esr_el1	// read exception syndrome register for EL1
+	lsr	x10,x9, 26	// x10=EC[31:26]: exception class
+	cmp	x10, 0b010101	// SVC instruction in AArch64 state
+	b.eq	route_syscall	// if equal, branch to syscall handler
 	eret
 	.balign	0x80
 // Handle IRQs from a lower EL (AArch64)
@@ -1045,6 +1049,44 @@ el1_lower_el_aarch32_fiq:
 el1_lower_el_aarch32_serror:
 	eret
 
+// syscalls ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	.set	SYSCALL_READ,63
+	.set	SYSCALL_WRITE,64
+	.set	SYSCALL_EXIT,93
+	.set	SYSCALL_BRK,214
+
+// NAME
+//	route_syscall - route system calls to the appropriate handler
+// SYNOPIS
+//	void route_syscall(void);
+// DESCRIPTION
+//	handle_syscall() routes system calls to the appropriate handler.
+route_syscall:
+	cmp	x8,SYSCALL_WRITE
+	b.eq	syscall_write
+
+	adr	x0,unk_syscall_msg
+	mov	x1,unk_syscall_msg_size
+	bl	write_bytes_pri_uart
+
+	eret
+
+// NAME
+//	syscall_write - write to a file descriptor
+// SYNOPIS
+//	size_or_error syscall_write(int64 const fd, void const * const buf, size const count);
+// DESCRIPTION
+//	syscall_write() writes count bytes from buf to the file descriptor fd.
+// RETURN VALUE
+//	On success, the number of bytes written is returned. On error, a negated error code is returned.
+syscall_write:
+	// TODO: ignore fd for now, always assume stdout
+	mov	x0,x1	// data=buf
+	mov	x1,x2	// count=count
+	bl	write_bytes_pri_uart
+	eret
+
 // Kernel Library Functions ////////////////////////////////////////////////////////////////////////////////////////////
 
 // NAME
@@ -1065,11 +1107,13 @@ sleep_forever:
 //	write_bytes_pri_uart - write bytes to the primary UART
 //
 // SYNOPIS
-//	void write_bytes_pri_uart(byte const * const data, size const count);
+//	size write_bytes_pri_uart(byte const * const data, size const count);
 //
 // DESCRIPTION
 //	write_bytes_pri_uart() writes count bytes to the primary UART. It blocks until count bytes are
 //	written to the UART data register.
+// RETURN VALUE
+//	The number of bytes written is returned. It always returns count.
 // NOTES
 //	This function must not use the stack since we call it before the stack is initialized.
 write_bytes_pri_uart:
@@ -1082,6 +1126,7 @@ write_bytes_pri_uart:
 	strb	w10,[x12]	// store byte in uart data register
 	cmp	x0,x9	// check if we are done
 	b.ne	.write_b_p_u_loop	// if not done, repeat
+	mov	x0,x1	// return count
 	ret
 
 // NAME
@@ -1205,6 +1250,9 @@ good_dtb_msg:	.ascii	"INFO: found valid device tree\r\n"
 	.balign	8
 not_balign_16_msg:	.ascii	"ERROR: address not 16-byte aligned\r\n"
 	.set	not_balign_16_msg_size,(. - not_balign_16_msg)
+	.balign	8
+unk_syscall_msg:	.ascii	"ERROR: unknown syscall\r\n"
+	.set	unk_syscall_msg_size,(. - unk_syscall_msg)
 	.balign	8
 userspace_addr:	.quad	0x20000000	// dest to copy userspace - must match translation table and must be 16 byte aligned
 	.balign	8
