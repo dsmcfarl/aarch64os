@@ -178,7 +178,8 @@ Translation Tables
 | tt_l2_0_0[5-254]  | invalid (0x0)                    | 0x00A0_0000 - 0x1FDF_FFFF (10 to 510MB)   |                   |
 | tt_l2_0_0[255]    | block descriptor (EL1 RW)        | 0x1FE0_0000 - 0x1FFF_FFFF (510 to 512MB)  | kernel stack 0    |
 | tt_l2_0_0[256]    | block descriptor (EL0 RO, exec)  | 0x2000_0000 - 0x201F_FFFF (512 to 514MB)  | user text/data.ro |
-| tt_l2_0_0[257-472]| invalid (0x0)                    | 0x2020_0000 - 0x3B1F_FFFF (514 to 946MB)  |                   |
+| tt_l2_0_0[257]    | block descriptor (EL0 RW)        | 0x2020_0000 - 0x203F_FFFF (514 to 516MB)  | user data.rw      |
+| tt_l2_0_0[258-472]| invalid (0x0)                    | 0x2040_0000 - 0x3B1F_FFFF (516 to 946MB)  |                   |
 | tt_l2_0_0[473]    | block descriptor (EL0 RW)        | 0x3B20_0000 - 0x3B3F_FFFF (946 to 948MB)  | user stack 0      |
 | tt_l2_0_0[474-511]| block descriptors (EL1 RWnocache)| 0x3B40_0000 - 0x3FFF_FFFF (948 to 1024MB) | video core        |
 | ----------------- | -------------------------------- | ----------------------------------------- | ----------------- |
@@ -479,9 +480,9 @@ init_el1:
 
 .init_el1_good_copy:
 
+
 	// Enable MMU
 	bl	enable_el1_el0_mmu
-
 
 	// Prepare to jump to EL0.
 	ldr	x9,stack_top_el0_0
@@ -783,8 +784,20 @@ enable_el1_el0_mmu:
 	orr	x10,x10,0x20000000	// address = 0x2000_0000
 	str	x10,[x9],8	// write block descriptor to table
 
-	// skip 257-472
-	add	x9,x9,8*(472-257+1)
+	// tt_l2_0_0[257]: block descriptor (EL0 RW), 0x2020_0000 - 0x203F_FFFF (514 to 516MB), user data.rw
+	mov	x10,0b01	// valid bit, block type
+	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
+	orr	x10,x10,(0b01<<6)	// AP[7:6]=0b01: EL1/2/3 RW, EL0 RW
+	orr	x10,x10,(0b11<<8)	// SH[9:8]=0b11: inner shareable
+	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
+	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
+	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
+	mov	x11,0x20200000
+	orr	x10,x10,x11	// address = 0x2020_0000
+	str	x10,[x9],8	// write block descriptor to table
+
+	// skip 258-472
+	add	x9,x9,8*(472-258+1)
 
 	// tt_l2_0_0[473]: block descriptor (EL0 RW), 0x3B20_0000 - 0x3B3F_FFFF (946 to 948MB), user stack 0
 	mov	x10,0b01	// valid bit, block type
@@ -794,7 +807,7 @@ enable_el1_el0_mmu:
 	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
 	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
 	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
-	adrp	x11,0x3B200000	// out of range for adr and orr, so use adrp
+	mov	x11,0x3B200000
 	orr	x10,x10,x11	// address = 0x3B20_0000
 	str	x10,[x9],8	// write block descriptor to table
 
@@ -1065,11 +1078,28 @@ el1_lower_el_aarch32_serror:
 route_syscall:
 	cmp	x8,SYSCALL_WRITE
 	b.eq	syscall_write
+	cmp	x8,SYSCALL_READ
+	b.eq	syscall_read
 
 	adr	x0,unk_syscall_msg
 	mov	x1,unk_syscall_msg_size
 	bl	write_bytes_pri_uart
 
+	eret
+
+// NAME
+//	syscall_read - read a file descriptor
+// SYNOPIS
+//	size_or_error syscall_read(int64 const fd, void const * const buf, size const count);
+// DESCRIPTION
+//	syscall_read() reads count bytes from file descriptor fd to buffer.
+// RETURN VALUE
+//	On success, the number of bytes read is returned. On error, a negated error code is returned.
+syscall_read:
+	// TODO: ignore fd for now, always assume stdin
+	mov	x0,x1	// data=buf
+	mov	x1,x2	// count=count
+	bl	read_bytes_pri_uart
 	eret
 
 // NAME
@@ -1130,6 +1160,32 @@ write_bytes_pri_uart:
 	ret
 
 // NAME
+//	read_bytes_pri_uart - read bytes from the primary UART
+//
+// SYNOPIS
+//	size read_bytes_pri_uart(byte * const buffer, size const count);
+//
+// DESCRIPTION
+//	read_bytes_pri_uart() reads count bytes from the primary UART into buffer. It blocks until count
+//	bytes are read from the UART data register.
+// RETURN VALUE
+//	The number of bytes read is returned. It always returns count.
+read_bytes_pri_uart:
+	add	x9,x0,x1	// calculate end of buffer (byte after last byte)
+	ldr	x10,pri_uart_dr	// load uart data register adddress
+.read_b_p_u_loop:
+	ldr	w11,[x10,0x18]	// load uart flag register into w11
+	tst	w11,0x10	// test uart flag register bit 4 (RXFE) is set
+	bne	.read_b_p_u_loop	// if set, wait for it to clear
+	ldrb	w12,[x10]	// load byte from uart data register
+	strb	w12,[x0],1	// store byte in buffer and increment pointer
+	cmp	x0,x9	// compare current address with end of buffer
+	b.ne	.read_b_p_u_loop	// repeat if not done
+	mov	x0,x1	// return number of bytes written
+	ret
+
+
+// NAME
 //	uint64_to_ascii_hex - convert a 64-bit unsigned integer to ASCII hexadecimal
 //
 // SYNOPIS
@@ -1183,6 +1239,9 @@ uint64_to_ascii_hex:
 	ret
 
 // RW Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// TODO: this is not RW after MMU is enabled. If we have RW data, it needs to be relocated to a RW block.
+// Also, we are initializing the translation tables dynamically so don't need .fill directives. So just need to set the
+// tt_ symbols to appropriate addresses that will be RW.
 
 	.balign	0x1000	// 4KB alignment
 tt_l1_0:
@@ -1193,6 +1252,7 @@ tt_l2_0_0:
 	.balign	0x1000	// 4KB alignment
 tt_l2_0_3:
 	.fill 4096 , 1 , 0
+
 
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
