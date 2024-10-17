@@ -210,11 +210,13 @@ Translation Tables
 	.set	STACK_TOP_EL0_0,0x3B400000	// 948MB (right below video core)
 
 // Other:
-	.set	KERNEL_ADDR,0x80000		// kernel address after relocation
-	.set	USERSPACE_ADDR,0x20000000	// 512MB dest to copy userspace
+	.set	KERNEL_DATA,0x800000	// kernel RW data section start
+	.set	KERNEL_TEXT,0x80000		// kernel address after relocation
+	.set	USERSPACE_TEXT,0x20000000	// 512MB dest to copy userspace
 				// must match translation table and
 				// must be 16 byte aligned
 	.set	USERSPACE_SIZE,0x40000	// TODO: 256KB for now
+// MMIO:
 	.set	MMIO_BASE,0xFE000000
 	.set	PRI_UART_DR,0x201000	// primary UART data register (RPi4B)
 
@@ -476,10 +478,10 @@ init_el1:
 
 .init_el1_good_dt:
 
-	// Copy userspace from USERSPACE_START to USERSPACE_ADDR (USERSPACE_SIZE bytes)
-	mov	x0,USERSPACE_START
-	add	x0,x0,KERNEL_ADDR	// add offset to kernel image
-	mov	x1,USERSPACE_ADDR	// x1 = userspace entrypoint
+	// Copy userspace from KERNEL_END to USERSPACE_TEXT (USERSPACE_SIZE bytes)
+	mov	x0,KERNEL_END
+	add	x0,x0,KERNEL_TEXT	// add offset to kernel image
+	mov	x1,USERSPACE_TEXT	// x1 = userspace entrypoint
 	mov	x2,USERSPACE_SIZE
 	bl	copy_balign_16
 	cmp	x0,ERROR_NONE	// check if copy was successful
@@ -507,7 +509,7 @@ init_el1:
 			// D[9]=0: Debug exceptions are not masked
 	msr	spsr_el1,x9	// set EL1 saved program status register
 
-	mov	x9,USERSPACE_ADDR	// x9 = address of userspace entrypoint
+	mov	x9,USERSPACE_TEXT	// x9 = address of userspace entrypoint
 	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at userspace entrypoint
 
 .init_el1_done:	// log EL1 initialization complete
@@ -625,7 +627,8 @@ enable_el1_el0_mmu:
 	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
 
 	// Set translation table address (start at level 1, and only use ttbr0_el1, not ttbr1_el1).
-	adr	x9,tt_l1_0	// x9=address of level 1 translation table
+	adr	x9,tt_l1_0_p	// x9=address of ptr to level 1 translation table
+	ldr	x9,[x9]	// x9=address of level 1 translation table
 	msr	ttbr0_el1,x9	// set translation table base register 0
 
 	// Setup the three memory attribute types we will use.
@@ -677,29 +680,34 @@ enable_el1_el0_mmu:
 	// UXN[54]: unprivileged execute never bit
 
 	// First fill tables with faults.
-	adr	x9,tt_l1_0	// x9=address of level 1 translation table
+	adr	x9,tt_l1_0_p	// x9=address of ptr to level 1 translation table
+	ldr	x9,[x9]	// x9=address of level 1 translation table
 	mov	w10,512	// number of entries
 .enable_e_e_m_1:	stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
 	sub	w10,w10,2	// decrement count by 2 (writing two entries at once)
 	cbnz	w10,.enable_e_e_m_1
 
-	adr	x9,tt_l2_0_0	// x9=address of level 2 translation table 0
+	adr	x9,tt_l2_0_0_p	// x9=address of ptr to level 2 translation table 0
+	ldr	x9,[x9]	// x9=address of level 2 translation table 0
 	mov	w10,512	// number of entries
 .enable_e_e_m_2:	stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
 	sub	w10,w10,2	// decrement count by 2 (writing two entries at once)
 	cbnz	w10,.enable_e_e_m_2
 
-	adr	x9,tt_l2_0_3	// x9=address of level 2 translation table 3
+	adr	x9,tt_l2_0_3_p	// x9=address of ptr to level 2 translation table 3
+	ldr	x9,[x9]	// x9=address of level 2 translation table 3
 	mov	w10,512	// number of entries
 .enable_e_e_m_3:	stp	xzr,xzr,[x9],16	// 0x0 (fault) into table entries
 	sub	w10,w10,2	// decrement count by 2 (writing two entries at once)
 	cbnz	w10,.enable_e_e_m_3
 
 	// Populate level 1 translation table 0.
-	adr	x9,tt_l1_0	// x9=address of level 1 translation table
+	adr	x9,tt_l1_0_p	// x9=address of ptr to level 1 translation table
+	ldr	x9,[x9]	// x9=address of level 1 translation table
 	// tt_l1_0[0]: table descriptor tt_l2_0_0, 0x0000_0000 - 0x3FFF_FFFF (0GB to 1GB)
 	mov	x10,0b11	// valid bit, table type
-	adr	x11,tt_l2_0_0
+	adr	x11,tt_l2_0_0_p
+	ldr	x11,[x11]	// x11=address of level 2 translation table 0
 	orr	x10,x10,x11	// address = tt_l2_0_0
 	str	x10,[x9],8	// write block descriptor to table
 
@@ -708,12 +716,14 @@ enable_el1_el0_mmu:
 
 	// tt_l1_0[3]: table descriptor tt_l2_0_3, 0xC000_0000 - 0xFFFF_FFFF (3GB to 4GB)
 	mov	x10,0b11	// valid bit, table type
-	adr	x11,tt_l2_0_3
+	adr	x11,tt_l2_0_3_p
+	ldr	x11,[x11]	// x11=address of level 2 translation table 3
 	orr	x10,x10,x11	// address = tt_l2_0_3
 	str	x10,[x9],8	// write block descriptor to table
 
 	// Populate level 2 translation table 0.
-	adr	x9,tt_l2_0_0	// x9=address of level 2 translation table 0
+	adr	x9,tt_l2_0_0_p	// x9=address of ptr to level 2 translation table 0
+	ldr	x9,[x9]	// x9=address of level 2 translation table 0
 	// tt_l2_0_0[0]: block descriptor (EL1 RO, exec), 0x0000_0000 - 0x001F_FFFF (0 to 2MB)kern text/ro
 	mov	x10,0b01	// valid bit, block type
 	orr	x10,x10,(0b001<<2)	// AttrIdx[4:2]=0b001: Attr1: Normal, Inner/Outer WB/WA/RA
@@ -766,7 +776,7 @@ enable_el1_el0_mmu:
 	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
 	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
 	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
-	orr	x10,x10,0x00800000	// address = 0x0080_0000
+	orr	x10,x10,KERNEL_DATA	// address
 	str	x10,[x9],8	// write block descriptor to table
 
 	// skip 5-254
@@ -829,7 +839,8 @@ enable_el1_el0_mmu:
 
 	// TODO: this is temporary
 	// tt_l1_0[3]: block descriptor, 0xC000_0000 - 0xFFFF_FFFF (3GB to 4GB)
-	adr	x9,tt_l1_0	// x9=address of level 1 translation table
+	adr	x9,tt_l1_0_p	// x9=address of ptr to level 1 translation table
+	ldr	x9,[x9]	// x9=address of level 1 translation table
 	mov	x10,0b01	// valid bit, block type
 	orr	x10,x10,(0b010<<2)	// AttrIdx[4:2]=0b010: Attr2: Device-nGnRnE
 			// AP[7:6]=0b00: EL1/2/3 RW, EL0 No Access
@@ -1250,21 +1261,6 @@ uint64_to_ascii_hex:
 	sub	x0,x11,x1	// x0 = x11 - x1 (return number of characters written)
 	ret
 
-// RW Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// TODO: this is not RW after MMU is enabled. If we have RW data, it needs to be relocated to a RW block.
-// Also, we are initializing the translation tables dynamically so don't need .fill directives. So just need to set the
-// tt_ symbols to appropriate addresses that will be RW.
-
-	.balign	0x1000	// 4KB alignment
-tt_l1_0:
-	.fill 4096 , 1 , 0
-	.balign	0x1000	// 4KB alignment
-tt_l2_0_0:
-	.fill 4096 , 1 , 0
-	.balign	0x1000	// 4KB alignment
-tt_l2_0_3:
-	.fill 4096 , 1 , 0
-
 
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1316,12 +1312,17 @@ not_balign_16_msg:	.ascii	"ERROR: address not 16-byte aligned\r\n"
 	.balign	8
 unk_syscall_msg:	.ascii	"ERROR: unknown syscall\r\n"
 	.set	unk_syscall_msg_size,(. - unk_syscall_msg)
+
+// Pointers to RW data
 	.balign	8
+tt_l1_0_p:	.quad	(KERNEL_DATA+0x0000)
+tt_l2_0_0_p:	.quad	(KERNEL_DATA+0x1000)
+tt_l2_0_3_p:	.quad	(KERNEL_DATA+0x2000)
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // For ease of initial development, userspace init is concatenated here. Eventually, userspace will be loaded from disk.
-	.balign	16	// USERSPACE_START must be 16-byte aligned
-	.set USERSPACE_START,.
+	.balign	16	// KERNEL_END must be 16-byte aligned
+	.set KERNEL_END,.
 
 // vim: set ts=20:
