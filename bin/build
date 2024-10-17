@@ -22,7 +22,7 @@ $OBJCOPY -O binary $BUILD/kernel/kernel.o $BUILD/kernel/kernel.bin
 $OBJCOPY --only-keep-debug $BUILD/kernel/kernel.o $BUILD/kernel/kernel.sym
 
 # extract the disassembly from the ELF file (used for debugging)
-#$OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
+$OBJDUMP -D $BUILD/kernel/kernel.o > $BUILD/kernel/kernel.dump
 
 # loop.bin is used as a dummy kernel that just loops forever waiting for gdb to connect and load the real kernel for development
 $AS -g -c $SRC/kernel/loop.s -o $BUILD/kernel/loop.o
@@ -44,7 +44,7 @@ $OBJCOPY -O binary $BUILD/init/init.o $BUILD/init/init.bin
 $OBJCOPY --only-keep-debug $BUILD/init/init.o $BUILD/init/init.sym
 
 # extract the disassembly from the ELF file (used for debugging)
-#$OBJDUMP -D $BUILD/init/init.o > $BUILD/init/init.dump
+$OBJDUMP -D $BUILD/init/init.o > $BUILD/init/init.dump
 
 # combine the kernel and init into a single binary (kernel copies init to 0x20000000 and jumps to it once in EL0)
 cat $BUILD/init/init.bin >> $BUILD/kernel/kernel.bin
