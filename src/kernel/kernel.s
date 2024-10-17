@@ -203,6 +203,21 @@ Translation Tables
 	.set	ERROR_NONE,0
 	.set	ERROR,1
 
+// Stack addresses:
+	.set	STACK_TOP_EL3_0,0x20000000	// 512MB
+	.set	STACK_TOP_EL2_0,0x1FFF8000
+	.set	STACK_TOP_EL1_0,0x1FFF0000
+	.set	STACK_TOP_EL0_0,0x3B400000	// 948MB (right below video core)
+
+// Other:
+	.set	KERNEL_ADDR,0x80000		// kernel address after relocation
+	.set	USERSPACE_ADDR,0x20000000	// 512MB dest to copy userspace
+				// must match translation table and
+				// must be 16 byte aligned
+	.set	USERSPACE_SIZE,0x40000	// TODO: 256KB for now
+	.set	MMIO_BASE,0xFE000000
+	.set	PRI_UART_DR,0x201000	// primary UART data register (RPi4B)
+
 // Startup Code ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // NAME
@@ -284,8 +299,7 @@ init_el3:
 	bl	write_bytes_pri_uart
 
 	// Setup EL3.
-	ldr	x9,stack_top_el3_0
-	mov	sp,x9	// set EL3 stack pointer (early as possible so can safely do nested bl)
+	mov	sp,STACK_TOP_EL3_0	// set EL3 stack pointer (early as possible so can safely do nested bl)
 
 	adr	x9,el3_vector_table
 	msr	vbar_el3,x9	// set EL3 vector base address
@@ -366,8 +380,7 @@ init_el2:
 	bl	write_bytes_pri_uart
 
 	// Setup EL2.
-	ldr	x9,stack_top_el2_0
-	mov	sp,x9	// set EL2 stack pointer
+	mov	sp,STACK_TOP_EL2_0	// set EL2 stack pointer
 
 	adr	x9,el2_vector_table
 	msr	vbar_el2,x9	// set EL2 vector base address
@@ -449,8 +462,7 @@ init_el1:
 	bl	write_bytes_pri_uart
 
 	// Setup EL1.
-	ldr	x9,stack_top_el1_0
-	mov	sp,x9	// set EL1 stack pointer
+	mov	sp,STACK_TOP_EL1_0	// set EL1 stack pointer
 
 	adr	x9,el1_vector_table
 	msr	vbar_el1,x9	// set EL1 vector base address
@@ -464,12 +476,11 @@ init_el1:
 
 .init_el1_good_dt:
 
-	// Copy userspace from userspace_start to userspace_addr (userspace_size bytes)
-	adr	x9,userspace_addr
-	ldr	x9,[x9]	// x9 = userspace entrypoint
-	adr	x0,userspace_start
-	mov	x1,x9
-	mov	x2,userspace_size
+	// Copy userspace from USERSPACE_START to USERSPACE_ADDR (USERSPACE_SIZE bytes)
+	mov	x0,USERSPACE_START
+	add	x0,x0,KERNEL_ADDR	// add offset to kernel image
+	mov	x1,USERSPACE_ADDR	// x1 = userspace entrypoint
+	mov	x2,USERSPACE_SIZE
 	bl	copy_balign_16
 	cmp	x0,ERROR_NONE	// check if copy was successful
 	b.eq	.init_el1_good_copy	// if successful, continue
@@ -485,7 +496,7 @@ init_el1:
 	bl	enable_el1_el0_mmu
 
 	// Prepare to jump to EL0.
-	ldr	x9,stack_top_el0_0
+	mov	x9,STACK_TOP_EL0_0
 	msr	sp_EL0,x9	// set EL0 stack pointer (cannot do it in EL0 so have to do here)
 
 	mov	x9,0	// M[3:0]=0000: EL0
@@ -496,8 +507,7 @@ init_el1:
 			// D[9]=0: Debug exceptions are not masked
 	msr	spsr_el1,x9	// set EL1 saved program status register
 
-	adr	x9,userspace_addr
-	ldr	x9,[x9]	// x9 = address of userspace entrypoint
+	mov	x9,USERSPACE_ADDR	// x9 = address of userspace entrypoint
 	msr	elr_el1,x9	// set EL1 exception link register to start EL0 at userspace entrypoint
 
 .init_el1_done:	// log EL1 initialization complete
@@ -1149,7 +1159,8 @@ sleep_forever:
 write_bytes_pri_uart:
 	add	x9,x0,x1	// x9 = data + count (byte after last)
 .write_b_p_u_loop:	ldrb	w10,[x0],1	// w10 = *data++ (load byte then increment address)
-	ldr	x12,pri_uart_dr	// x12 = uart data register adddress
+	mov	x12,MMIO_BASE
+	add	x12,x12,PRI_UART_DR	// x12 = uart data register adddress
 .write_b_p_u_inner:	ldr	w11,[x12,0x18]	// w11 = uart flag register
 	tst	w11,0x20	// test uart flag register bit 5 (TXFF) is set
 	bne	.write_b_p_u_inner	// if set, wait for it to clear
@@ -1172,7 +1183,8 @@ write_bytes_pri_uart:
 //	The number of bytes read is returned. It always returns count.
 read_bytes_pri_uart:
 	add	x9,x0,x1	// calculate end of buffer (byte after last byte)
-	ldr	x10,pri_uart_dr	// load uart data register adddress
+	mov	x10,MMIO_BASE
+	add	x10,x10,PRI_UART_DR	// x10 = uart data register adddress
 .read_b_p_u_loop:
 	ldr	w11,[x10,0x18]	// load uart flag register into w11
 	tst	w11,0x10	// test uart flag register bit 4 (RXFE) is set
@@ -1256,15 +1268,6 @@ tt_l2_0_3:
 
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// These stack address must match the addresses in the translation tables.
-	.balign	8
-stack_top_el3_0:	.quad	0x20000000	// 512MB
-stack_top_el2_0:	.quad	0x1FFF8000
-stack_top_el1_0:	.quad	0x1FFF0000
-	.balign	8
-stack_top_el0_0:	.quad	0x3B400000	// 948MB (right below video core)
-	.balign	8
-pri_uart_dr:	.quad	0xFE201000	// primary UART data register (RPi4B)
 	.balign	8
 init_el3_msg:	.ascii	"INFO: initlizing EL3...\r\n"
 	.set	init_el3_msg_size,(. - init_el3_msg)
@@ -1314,15 +1317,11 @@ not_balign_16_msg:	.ascii	"ERROR: address not 16-byte aligned\r\n"
 unk_syscall_msg:	.ascii	"ERROR: unknown syscall\r\n"
 	.set	unk_syscall_msg_size,(. - unk_syscall_msg)
 	.balign	8
-userspace_addr:	.quad	0x20000000	// dest to copy userspace - must match translation table and must be 16 byte aligned
-	.balign	8
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-	.set	userspace_size,0x40000	// TODO: 256KB for now
 
 // For ease of initial development, userspace init is concatenated here. Eventually, userspace will be loaded from disk.
-// compiled separately and loaded at the appropriate address.
-	.balign	16	// userspace_start must be 16-byte aligned
-userspace_start:	
+	.balign	16	// USERSPACE_START must be 16-byte aligned
+	.set USERSPACE_START,.
 
 // vim: set ts=20:
