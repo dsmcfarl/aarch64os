@@ -210,8 +210,10 @@ Translation Tables
 	.set	STACK_TOP_EL0_0,0x3B400000	// 948MB (right below video core)
 
 // Other:
+	.set	L2_BLOCK_SIZE,0x200000	// 2MB
 	.set	KERNEL_DATA,0x800000	// kernel RW data section start
 	.set	KERNEL_TEXT,0x80000		// kernel address after relocation
+	.set	USER_DATA,0x20200000	// userspace RW data section start
 	.set	USERSPACE_TEXT,0x20000000	// 512MB dest to copy userspace
 				// must match translation table and
 				// must be 16 byte aligned
@@ -496,6 +498,11 @@ init_el1:
 
 	// Enable MMU
 	bl	enable_el1_el0_mmu
+
+	// Init the program break for userspace
+	ldr	x9,current_brk_p	// x9=address where the current program break is stored
+	ldr	x10,user_data_p	// x10=address of userspace data section
+	str	x10,[x9]	// init current program break
 
 	// Prepare to jump to EL0.
 	mov	x9,STACK_TOP_EL0_0
@@ -812,7 +819,7 @@ enable_el1_el0_mmu:
 	orr	x10,x10,(0b1<<10)	// AF[10]=1: access flag
 	orr	x10,x10,(0b1<<53)	// PXN[53]=1: EL1/2/3 cannot execute
 	orr	x10,x10,(0b1<<54) 	// UXN[54]=1: EL0 cannot execute
-	mov	x11,0x20200000
+	mov	x11,USER_DATA
 	orr	x10,x10,x11	// address = 0x2020_0000
 	str	x10,[x9],8	// write block descriptor to table
 
@@ -1101,6 +1108,8 @@ route_syscall:
 	b.eq	syscall_write
 	cmp	x8,SYSCALL_READ
 	b.eq	syscall_read
+	cmp	x8,SYSCALL_BRK
+	b.eq	syscall_brk
 
 	adr	x0,unk_syscall_msg
 	mov	x1,unk_syscall_msg_size
@@ -1137,6 +1146,41 @@ syscall_write:
 	mov	x1,x2	// count=count
 	bl	write_bytes_pri_uart
 	eret
+
+
+// NAME
+//	syscall_brk - adjust the program break
+// SYNOPIS
+//	void *syscall_brk(void *addr);
+// DESCRIPTION
+//	syscall_brk() sets the end of the data segment to the value specified by addr.
+// RETURN VALUE
+//	On success, the new program break is returned. On failure, the current program break is returned.
+// NOTES
+//	By calling with a known invalid address such as 0, the current program break can be queried.
+syscall_brk:
+	ldr	x9,current_brk_p	// x9=address where the current program break is stored
+	ldr	x10,[x9]	// x10=current program break
+
+	cmp	x0,x10	// compare the requested break with the current break
+	b.eq	.syscall_brk_cur	// if they are equal, return the current break
+
+	ldr	x11,user_data_p	// x11=address where the user data segment starts
+	cmp	x0,x11	// compare with the start of user data segment
+	b.lt	.syscall_brk_cur	// if the new break is less than, it's invalid
+
+	ldr	x11,user_data_end_p	// x11=address where the user data segment ends
+	cmp	x0,x11	// compare with the start of segement after the user data
+	b.ge	.syscall_brk_cur	// if the new break is above or equal, it's invalid
+
+
+	str	x0,[x9]	// update the program break
+	eret		// return x0=new break
+
+.syscall_brk_cur:
+	mov	x0,x10	// return x0=current break
+	eret
+
 
 // Kernel Library Functions ////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1312,12 +1356,16 @@ not_balign_16_msg:	.ascii	"ERROR: address not 16-byte aligned\r\n"
 	.balign	8
 unk_syscall_msg:	.ascii	"ERROR: unknown syscall\r\n"
 	.set	unk_syscall_msg_size,(. - unk_syscall_msg)
+	.balign	8
+user_data_p:	.quad	USER_DATA
+user_data_end_p:	.quad	USER_DATA+L2_BLOCK_SIZE
 
 // Pointers to RW data
 	.balign	8
 tt_l1_0_p:	.quad	(KERNEL_DATA+0x0000)
 tt_l2_0_0_p:	.quad	(KERNEL_DATA+0x1000)
 tt_l2_0_3_p:	.quad	(KERNEL_DATA+0x2000)
+current_brk_p:	.quad	(KERNEL_DATA+0x3000)
 
 // Userspace ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 

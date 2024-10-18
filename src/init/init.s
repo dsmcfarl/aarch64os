@@ -46,6 +46,13 @@ init:
 	bl	syscall_write
 	cmp	x0,0
 	b.lt	.init_write_error
+	// test syscall_brk
+	mov	x0,0	// bad address
+	bl	syscall_brk
+	add	x0,x0,0x1000	// add 4k
+	bl	syscall_brk
+	mov	x9,x0	// save brk
+
 	b	.init_loop
 .init_write_error:
 	b	.	// no point logging if we can't write
@@ -98,6 +105,24 @@ syscall_write:
 	ldp	x29,x30,[sp],16	// restore frame pointer and link register
 	ret
 
+// NAME
+//	syscall_brk - set the program break
+//
+// SYNOPIS
+//	void * syscall_brk(void const * const addr);
+//
+// DESCRIPTION
+//	syscall_brk() sets the program break to addr.
+// RETURN VALUE
+//	On success, the previous program break is returned. On error, the current program break is returned.
+syscall_brk:
+	stp	fp,lr,[sp,-16]!	// save frame pointer and link register
+			// x0 = addr (set by caller)
+	mov	w8,SYSCALL_BRK
+	svc	0	// make system call
+	ldp	x29,x30,[sp],16	// restore frame pointer and link register
+	ret
+
 // RO Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	.balign	8
@@ -106,7 +131,3 @@ begin_init_msg:	.ascii	"INFO: initializing userspace...\r\n"
 	.balign	8
 write_error_msg:	.ascii	"ERROR: syscall_write\r\n"
 	.set	write_error_msg_size,(. - write_error_msg)
-
-// RW Data /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// TODO: if we have any RW data for userspace it needs to be copied to a RW block from the kernel translation table.
