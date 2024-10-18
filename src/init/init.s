@@ -29,16 +29,6 @@ The binary image of init is appended to the kernel image. The kernel copies it t
 // RETURN VALUE
 //	Does not return.
 init:
-	// test read
-	mov	x0,0	// file descriptor
-	mov	x1,0x20200000	// buffer
-	mov	x2,2	// size
-	bl	syscall_read
-
-	mov	x0,1	// file descriptor
-	mov	x1,0x20200000	// buffer
-	mov	x2,2	// size
-	bl	syscall_write
 
 	mov	x0,1	// file descriptor
 	adr	x1,begin_init_msg	// buffer
@@ -46,6 +36,32 @@ init:
 	bl	syscall_write
 	cmp	x0,0
 	b.lt	.init_write_error
+
+	// test read
+	mov	x0,1	// file descriptor
+	adr	x1,press_key_msg	// buffer
+	mov	x2,press_key_msg_size	// size
+	bl	syscall_write
+	cmp	x0,0
+	b.lt	.init_write_error
+
+	mov	x0,0	// file descriptor
+	mov	x1,0x20200000	// buffer
+	mov	x2,1	// size
+	bl	syscall_read
+
+	mov	x0,1	// file descriptor
+	adr	x1,you_pressed_msg	// buffer
+	mov	x2,you_pressed_msg_size	// size
+	bl	syscall_write
+	cmp	x0,0
+	b.lt	.init_write_error
+
+	mov	x0,1	// file descriptor
+	mov	x1,0x20200000	// buffer
+	mov	x2,2	// size
+	bl	syscall_write
+
 	// test syscall_brk
 	mov	x0,0	// bad address
 	bl	syscall_brk
@@ -131,3 +147,9 @@ begin_init_msg:	.ascii	"INFO: initializing userspace...\r\n"
 	.balign	8
 write_error_msg:	.ascii	"ERROR: syscall_write\r\n"
 	.set	write_error_msg_size,(. - write_error_msg)
+	.balign	8
+press_key_msg:	.ascii	"press any key to continue...\r\n"
+	.set	press_key_msg_size,(. - press_key_msg)
+you_pressed_msg:	.ascii	"you pressed: "
+	.set	you_pressed_msg_size,(. - you_pressed_msg)
+

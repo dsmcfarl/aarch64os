@@ -33,17 +33,16 @@ The `bin/get-tools` script has been tested on a base install of Debian bookworm 
 dependencies are listed. If you are using a different system, you may need to install additional packages and/or adjust
 the script.
 
+To run in QEMU do the following:
+(press `ctrl-a c` when you see "you pressed: ..." to halt QEMU and get to the monitor)
+
 ```sh
-git clone git@github.com:dsmcfarl/aarch64os.git
-cd aarch64os
-source .envrc  # adds bin/ to PATH and sets some environment variables
-get-tools      # installs system dependencies then downloads and builds tools to tools/ directory
-qemu           # runs the operating system in QEMU using bin/qemu script
-```
-
-You should see something similar to:
-
-```
+$ git clone git@github.com:dsmcfarl/aarch64os.git
+$ cd aarch64os
+$ source .envrc  # adds bin/ to PATH and sets some environment variables
+$ get-tools      # installs system dependencies then downloads and builds tools to tools/ directory
+...
+$ qemu           # runs the operating system in QEMU using bin/qemu script
 qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-pcie has been disabled!
 qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-rng200 has been disabled!
 qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-thermal has been disabled!
@@ -55,32 +54,29 @@ INFO: EL2 initialization complete
 INFO: initlizing EL1...
 INFO: found valid device tree
 INFO: EL1 initialization complete
-```
-
-You can stop QEMU with `Ctrl-a c` to get to the QEMU monitor. At the `(qemu) ` prompt, type `info registers` then enter.
-
-You should see something like:
-
-```
+INFO: initializing userspace...
+press any key to continue...
+you pressed: xQEMU 9.1.0 monitor - type 'help' for more information
 (qemu) info registers
 
 CPU#0
- PC=0000000020000000 X00=0000000000000003 X01=0000000000000004
-X02=0000000000000000 X03=0000000000000000 X04=0000000000000000
+ PC=0000000020000084 X00=0000000000000003 X01=0000000000000004
+X02=0000000000000002 X03=0000000000000000 X04=0000000000000000
 X05=0000000000000000 X06=0000000000000000 X07=0000000000000000
-X08=0000000000000000 X09=000000000008614b X10=000000000000000a
-X11=0000000000000090 X12=00000000fe201000 X13=0000000000000000
+X08=00000000000000d6 X09=0000000020201000 X10=0000000020200000
+X11=0000000020400000 X12=00000000fe201000 X13=0000000000000000
 X14=0000000000000000 X15=0000000000000000 X16=0000000000000000
 X17=0000000000000000 X18=0000000000000000 X19=0000000000000001
 X20=0000000000000000 X21=0000000000000000 X22=0000000000000000
 X23=0000000000000000 X24=0000000000000000 X25=0000000000000000
 X26=0000000000000000 X27=0000000000000000 X28=0000000000000000
-X29=0000000000000000 X30=0000000000080208  SP=000000003b400000
-PSTATE=00000000 ---- NS EL0t    FPU disabled
-(qemu)
+X29=0000000000000000 X30=0000000020000078  SP=000000003b400000
+PSTATE=20000000 --C- NS EL0t    FPU disabled
+(qemu) q
+$
 ```
 
-If everything was successfule, X00 should contain 3 and X01 should contain 4.
+If everything was successful X00 should equal 3 and X01 should equal 4 and X09 should equal 20201000.
 
 
 ## Organization
