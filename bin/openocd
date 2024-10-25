@@ -1,2 +1,3 @@
 #!/bin/sh -e
-/usr/bin/openocd --file interface/jlink.cfg --file $CONFIG/openocd/rpi4b.cfg
+#/usr/bin/openocd --file interface/jlink.cfg --file $CONFIG/openocd/rpi4b.cfg
+exec /usr/bin/openocd --file $CONFIG/openocd/ft232h.cfg --file $CONFIG/openocd/rpi4b.cfg
