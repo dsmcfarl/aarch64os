@@ -37,15 +37,15 @@ define resetload
 	resethalt
 	buildload
 	# redraw TUI
-	refresh
+	#refresh
 end
 
 # Connect to openocd (must already be running and the RPi4B must be powered on).
 target extended-remote :3333
 
 # Setup the GDB TUI to show three windows with registers in one and assembly in the other.
-layout split
-layout regs
+#layout split
+#layout regs
 
 # Call our custom command to reset and load
 # resetload
